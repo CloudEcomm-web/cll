@@ -7,7 +7,7 @@ const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 function App() {
   return (
-    <BrowserRouter basename="/cll">  {/* Remove trailing slash */}
+    <BrowserRouter basename="/cll/">  {/* Remove trailing slash */}
       <div className="min-h-screen bg-gray-50">
         {/* Navigation */}
         <nav className="bg-white shadow-sm">
