@@ -10,13 +10,13 @@ class LazadaAuth {
 
   // Generate signature for API requests
   generateSignature(apiPath, params) {
-    // Sort parameters
+    // Sort parameters alphabetically
     const sortedParams = Object.keys(params)
       .sort()
       .map(key => `${key}${params[key]}`)
       .join('');
 
-    // Create signature string
+    // Create signature string: API path + sorted parameters
     const signString = `${apiPath}${sortedParams}`;
 
     // Generate HMAC-SHA256 signature
@@ -41,7 +41,7 @@ class LazadaAuth {
 
     const params = {
       app_key: this.appKey,
-      timestamp: timestamp,
+      timestamp: timestamp.toString(),
       sign_method: 'sha256',
       code: code,
     };
@@ -57,9 +57,16 @@ class LazadaAuth {
         { params }
       );
 
+      console.log('Token creation response:', response.data);
+      
+      // Lazada returns the data in response.data
       return response.data;
     } catch (error) {
-      console.error('Lazada API Error:', error.response?.data || error.message);
+      console.error('Lazada Token Creation Error:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
       throw error;
     }
   }
@@ -71,7 +78,7 @@ class LazadaAuth {
 
     const params = {
       app_key: this.appKey,
-      timestamp: timestamp,
+      timestamp: timestamp.toString(),
       sign_method: 'sha256',
       refresh_token: refreshToken,
     };
@@ -86,20 +93,21 @@ class LazadaAuth {
         { params }
       );
 
+      console.log('Token refresh response:', response.data);
       return response.data;
     } catch (error) {
-      console.error('Lazada Refresh Token Error:', error.response?.data || error.message);
+      console.error('Lazada Token Refresh Error:', error.response?.data || error.message);
       throw error;
     }
   }
 
-  // Make authenticated API request
+  // Make authenticated API request (GET)
   async makeRequest(apiPath, accessToken, additionalParams = {}) {
     const timestamp = this.getTimestamp();
 
     const params = {
       app_key: this.appKey,
-      timestamp: timestamp,
+      timestamp: timestamp.toString(),
       sign_method: 'sha256',
       access_token: accessToken,
       ...additionalParams,
@@ -113,6 +121,86 @@ class LazadaAuth {
       return response.data;
     } catch (error) {
       console.error('Lazada API Request Error:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  // Make authenticated API request (POST)
+  async makePostRequest(apiPath, accessToken, bodyParams = {}) {
+    const timestamp = this.getTimestamp();
+
+    const params = {
+      app_key: this.appKey,
+      timestamp: timestamp.toString(),
+      sign_method: 'sha256',
+      access_token: accessToken,
+    };
+
+    const sign = this.generateSignature(apiPath, params);
+    params.sign = sign;
+
+    try {
+      const response = await axios.post(
+        `${this.apiUrl}${apiPath}`,
+        bodyParams,
+        { params }
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Lazada API POST Request Error:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  // Get Order Items (specific implementation)
+  async getOrderItems(accessToken, orderId) {
+    const apiPath = '/order/items/get';
+    const timestamp = this.getTimestamp();
+
+    const params = {
+      app_key: this.appKey,
+      timestamp: timestamp.toString(),
+      sign_method: 'sha256',
+      access_token: accessToken,
+      order_id: orderId.toString(),
+    };
+
+    const sign = this.generateSignature(apiPath, params);
+    params.sign = sign;
+
+    try {
+      const response = await axios.get(`${this.apiUrl}${apiPath}`, { params });
+      return response.data;
+    } catch (error) {
+      console.error('Lazada Get Order Items Error:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  // Get Multiple Order Items
+  async getMultipleOrderItems(accessToken, orderIds) {
+    const apiPath = '/orders/items/get';
+    const timestamp = this.getTimestamp();
+
+    // Convert array of order IDs to JSON string
+    const orderIdsJson = JSON.stringify(orderIds);
+
+    const params = {
+      app_key: this.appKey,
+      timestamp: timestamp.toString(),
+      sign_method: 'sha256',
+      access_token: accessToken,
+      order_ids: orderIdsJson,
+    };
+
+    const sign = this.generateSignature(apiPath, params);
+    params.sign = sign;
+
+    try {
+      const response = await axios.get(`${this.apiUrl}${apiPath}`, { params });
+      return response.data;
+    } catch (error) {
+      console.error('Lazada Get Multiple Order Items Error:', error.response?.data || error.message);
       throw error;
     }
   }

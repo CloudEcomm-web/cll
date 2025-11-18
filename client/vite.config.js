@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  base: '/', // Make sure this is '/' not '/cll/'
+  base: '/cll/', // Make sure this is '/' not '/cll/'
   server: {
     proxy: {
       '/api': {
