@@ -1,4 +1,4 @@
-import { HashRouter, Routes, Route, Link } from "react-router-dom";
+import { HashRouter, Routes, Route, Link, BrowserRouter } from "react-router-dom";
 import Dashboard from "./pages/Dashboard.jsx";
 import LazadaAuth from "./pages/LazadaAuth.jsx";
 import OrderItems from "./pages/OrderItems.jsx";
@@ -7,7 +7,7 @@ const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 function App() {
   return (
-    <HashRouter> {/* Changed from BrowserRouter to HashRouter */}
+    <BrowserRouter basename="/cll/" >
       <div className="min-h-screen bg-gray-50">
         {/* Navigation */}
         <nav className="bg-white shadow-sm">
@@ -41,7 +41,7 @@ function App() {
           <Route path="/orders" element={<OrderItems apiUrl={API_URL} />} />
         </Routes>
       </div>
-    </HashRouter>
+    </BrowserRouter>
   );
 }
 
