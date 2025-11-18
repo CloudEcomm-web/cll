@@ -55,10 +55,10 @@ function LazadaAuth({ apiUrl }) {
 
         setSuccess(true);
         
-        // Redirect to orders page after 2 seconds
+        // Redirect to orders page immediately - use navigate with replace
         setTimeout(() => {
-          navigate('/orders');
-        }, 2000);
+          navigate('/orders', { replace: true });
+        }, 1500);
       } else {
         setError(data.details || data.error || 'Failed to authenticate');
       }
@@ -131,7 +131,7 @@ function LazadaAuth({ apiUrl }) {
             <div className="mb-4 bg-green-50 border border-green-400 text-green-700 px-4 py-3 rounded relative">
               <strong className="font-bold">Success! </strong>
               <span className="block sm:inline">
-                Authentication successful. Redirecting to orders page...
+                Authentication successful. Taking you to your orders...
               </span>
             </div>
           )}

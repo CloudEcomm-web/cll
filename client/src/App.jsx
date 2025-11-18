@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Link } from "react-router-dom";
+import { HashRouter, Routes, Route, Link } from "react-router-dom";
 import Dashboard from "./pages/Dashboard.jsx";
 import LazadaAuth from "./pages/LazadaAuth.jsx";
 import OrderItems from "./pages/OrderItems.jsx";
@@ -7,7 +7,7 @@ const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 function App() {
   return (
-    <BrowserRouter basename="/cll/">
+    <HashRouter> {/* Changed from BrowserRouter to HashRouter */}
       <div className="min-h-screen bg-gray-50">
         {/* Navigation */}
         <nav className="bg-white shadow-sm">
@@ -18,22 +18,13 @@ function App() {
                   <span className="text-xl font-bold text-blue-600">CLL</span>
                 </div>
                 <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
-                  <Link
-                    to="/"
-                    className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
-                  >
+                  <Link to="/" className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
                     Home
                   </Link>
-                  <Link
-                    to="/dashboard"
-                    className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
-                  >
+                  <Link to="/dashboard" className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
                     Dashboard
                   </Link>
-                  <Link
-                    to="/orders"
-                    className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
-                  >
+                  <Link to="/orders" className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
                     Orders
                   </Link>
                 </div>
@@ -50,7 +41,7 @@ function App() {
           <Route path="/orders" element={<OrderItems apiUrl={API_URL} />} />
         </Routes>
       </div>
-    </BrowserRouter>
+    </HashRouter>
   );
 }
 
