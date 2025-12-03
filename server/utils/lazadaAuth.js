@@ -101,8 +101,8 @@ class LazadaAuth {
     }
   }
 
-  // Make authenticated API request (GET)
-   async makeRequest(apiPath, accessToken, additionalParams = {}) {
+// Make authenticated API request (GET) - WITH COMPREHENSIVE DEBUGGING
+  async makeRequest(apiPath, accessToken, additionalParams = {}) {
     const timestamp = this.getTimestamp();
 
     const params = {
@@ -113,30 +113,52 @@ class LazadaAuth {
       ...additionalParams,
     };
 
-    console.log('=== LAZADA AUTH makeRequest DEBUG ===');
-    console.log('API Path:', apiPath);
-    console.log('Additional Params:', JSON.stringify(additionalParams, null, 2));
-    console.log('Full Params (before signature):', JSON.stringify(params, null, 2));
+    console.log('\n🔧 LAZADA AUTH - makeRequest');
+    console.log('   API Path:', apiPath);
+    console.log('   Additional Params:', JSON.stringify(additionalParams, null, 2));
+    console.log('\n   All Params (before signature):');
+    console.log('   ├─ app_key:', params.app_key);
+    console.log('   ├─ timestamp:', params.timestamp);
+    console.log('   ├─ sign_method:', params.sign_method);
+    console.log('   ├─ access_token:', params.access_token?.substring(0, 20) + '...');
+    
+    // Log each additional param
+    Object.keys(additionalParams).forEach(key => {
+      console.log(`   ├─ ${key}:`, additionalParams[key]);
+    });
 
     const sign = this.generateSignature(apiPath, params);
     params.sign = sign;
 
-    console.log('Signature:', sign);
-    console.log('Full URL:', `${this.apiUrl}${apiPath}`);
-    console.log('Query String Params:', new URLSearchParams(params).toString());
+    console.log('   └─ sign:', sign);
+    console.log('\n   Full URL:', `${this.apiUrl}${apiPath}`);
+    
+    // Show what axios will actually send
+    const queryString = new URLSearchParams(params).toString();
+    console.log('   Query String Length:', queryString.length);
+    console.log('   Full Request URL:', `${this.apiUrl}${apiPath}?${queryString.substring(0, 100)}...`);
 
     try {
-      const response = await axios.get(`${this.apiUrl}${apiPath}`, { params });
-      console.log('✅ Response Status:', response.status);
-      console.log('✅ Response Data:', JSON.stringify(response.data, null, 2));
+      console.log('\n   📡 Making GET request...');
+      const response = await axios.get(`${this.apiUrl}${apiPath}`, { 
+        params,
+        timeout: 30000 
+      });
+      
+      console.log('   ✅ HTTP Status:', response.status);
+      console.log('   ✅ Response Code:', response.data?.code);
+      
+      if (response.data?.code !== '0' && response.data?.code !== 0) {
+        console.log('   ⚠️  API returned non-zero code:', response.data?.message);
+      }
+      
       return response.data;
     } catch (error) {
-      console.error('❌ Lazada API Request Error:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status,
-        headers: error.response?.headers
-      });
+      console.error('\n   ❌ Request Failed:');
+      console.error('   ├─ Error Message:', error.message);
+      console.error('   ├─ HTTP Status:', error.response?.status);
+      console.error('   ├─ Response Data:', JSON.stringify(error.response?.data, null, 2));
+      console.error('   └─ URL:', error.config?.url);
       throw error;
     }
   }

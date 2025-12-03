@@ -406,126 +406,93 @@ app.get('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (req
             currencyType
         } = req.query;
 
-        console.log('=== REPORT OVERVIEW REQUEST DEBUG ===');
-        console.log('Raw query params:', req.query);
+        console.log('\n' + '='.repeat(60));
+        console.log('REPORT OVERVIEW API REQUEST');
+        console.log('='.repeat(60));
+        console.log('Query params received:', req.query);
+        console.log('Access token:', req.accessToken?.substring(0, 20) + '...');
 
-        // Validate required parameters
-        if (!startDate) {
+        if (!startDate || !endDate) {
             return res.status(400).json({
-                error: 'Missing required parameter',
-                details: 'startDate is required (format: YYYY-MM-DD)'
+                error: 'Missing required parameters',
+                details: 'Both startDate and endDate are required (format: YYYY-MM-DD)',
+                received: { startDate, endDate }
             });
         }
 
-        if (!endDate) {
+        console.log('✅ Required params present');
+        console.log('   startDate:', startDate);
+        console.log('   endDate:', endDate);
+
+        // Build the exact params object that will be sent
+        const params = {
+            startDate: startDate.trim(),
+            endDate: endDate.trim()
+        };
+
+        // Add optional parameters
+        if (dimensions) {
+            params.dimensions = dimensions;
+            console.log('   dimensions:', dimensions);
+        }
+        if (metrics) {
+            params.metrics = metrics;
+            console.log('   metrics:', metrics);
+        }
+        if (currencyType) {
+            params.currencyType = currencyType;
+            console.log('   currencyType:', currencyType);
+        }
+
+        console.log('\n📤 Sending to Lazada API:');
+        console.log('   Path:', '/sponsor/solutions/report/getReportOverview');
+        console.log('   Params:', JSON.stringify(params, null, 2));
+
+        const reportData = await lazadaAuth.makeRequest(
+            '/sponsor/solutions/report/getReportOverview',
+            req.accessToken,
+            params
+        );
+
+        console.log('\n📥 Response received:');
+        console.log('   Code:', reportData.code);
+        console.log('   Message:', reportData.message);
+
+        if (reportData.code !== '0' && reportData.code !== 0) {
+            console.error('\n❌ API returned error:');
+            console.error('   Code:', reportData.code);
+            console.error('   Message:', reportData.message);
+            console.error('   Type:', reportData.type);
+            console.error('   Request ID:', reportData.request_id);
+            console.log('='.repeat(60) + '\n');
+            
             return res.status(400).json({
-                error: 'Missing required parameter',
-                details: 'endDate is required (format: YYYY-MM-DD)'
+                error: 'Lazada API Error',
+                code: reportData.code,
+                message: reportData.message,
+                type: reportData.type,
+                request_id: reportData.request_id,
+                params_sent: params,
+                hint: 'Check if the account has Sponsor Solutions enabled and proper permissions'
             });
         }
 
-        console.log('✅ Dates provided - startDate:', startDate, 'endDate:', endDate);
-
-        // Try different parameter name variations
-        // Based on Lazada's inconsistent naming conventions
-        const paramVariations = [
-            // Variation 1: Standard camelCase
-            {
-                name: 'camelCase',
-                params: {
-                    startDate: startDate,
-                    endDate: endDate
-                }
-            },
-            // Variation 2: With "last" prefix (from original error)
-            {
-                name: 'lastPrefix',
-                params: {
-                    lastStartDate: startDate,
-                    lastEndDate: endDate
-                }
-            },
-            // Variation 3: Snake case
-            {
-                name: 'snake_case',
-                params: {
-                    start_date: startDate,
-                    end_date: endDate
-                }
-            },
-            // Variation 4: All lowercase
-            {
-                name: 'lowercase',
-                params: {
-                    startdate: startDate,
-                    enddate: endDate
-                }
-            }
-        ];
-
-        let successResponse = null;
-        let lastError = null;
-
-        // Try each variation until one works
-        for (const variation of paramVariations) {
-            try {
-                console.log(`\n🔄 Trying variation: ${variation.name}`);
-                console.log('Parameters:', JSON.stringify(variation.params, null, 2));
-
-                // Add optional parameters if provided
-                if (dimensions) variation.params.dimensions = dimensions;
-                if (metrics) variation.params.metrics = metrics;
-                if (currencyType) variation.params.currencyType = currencyType;
-
-                const reportData = await lazadaAuth.makeRequest(
-                    '/sponsor/solutions/report/getReportOverview',
-                    req.accessToken,
-                    variation.params
-                );
-
-                console.log('Response code:', reportData.code);
-
-                // Check if this variation worked
-                if (reportData.code === '0' || reportData.code === 0) {
-                    console.log(`✅ SUCCESS with variation: ${variation.name}`);
-                    successResponse = {
-                        ...reportData,
-                        _debug: {
-                            working_format: variation.name,
-                            parameters_used: variation.params
-                        }
-                    };
-                    break;
-                } else {
-                    console.log(`❌ Failed with variation: ${variation.name} - ${reportData.message}`);
-                    lastError = reportData;
-                }
-            } catch (error) {
-                console.log(`❌ Error with variation: ${variation.name} - ${error.message}`);
-                lastError = error;
-            }
-        }
-
-        // If we found a working variation
-        if (successResponse) {
-            console.log('✅ Report overview fetched successfully');
-            return res.json(successResponse);
-        }
-
-        // If none worked, return the last error
-        console.error('❌ All variations failed');
-        return res.status(400).json({
-            error: 'Failed to get report overview - tried all parameter formats',
-            last_error: lastError?.message || lastError,
-            tried_formats: paramVariations.map(v => v.name),
-            suggestion: 'Please check Lazada API documentation for correct parameter names'
-        });
-
+        console.log('✅ SUCCESS - Report data retrieved');
+        console.log('='.repeat(60) + '\n');
+        
+        res.json(reportData);
     } catch (error) {
-        console.error('❌ Unexpected error:', error);
+        console.error('\n❌ EXCEPTION CAUGHT:');
+        console.error('   Message:', error.message);
+        console.error('   Response status:', error.response?.status);
+        console.error('   Response data:', error.response?.data);
+        console.log('='.repeat(60) + '\n');
+        
         res.status(500).json({
-            error: 'Failed to get report overview',
-            details: error.response?.data || error.message
+            error: 'Request failed',
+            message: error.message,
+            details: error.response?.data,
+            status: error.response?.status
         });
     }
 });
