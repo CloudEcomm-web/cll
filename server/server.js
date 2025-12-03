@@ -18,7 +18,7 @@ const lazadaAuth = new LazadaAuth(
 // CORS configuration
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production' 
-    ? ['https://renzparagas123.github.io'] // ✅ This is correct - don't add /cll here
+    ? ['https://renzparagas123.github.io']
     : ['http://localhost:5173', 'http://localhost:3000'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -63,8 +63,8 @@ app.get('/api/test', (req, res) => {
 app.get('/api/lazada/auth-url', (req, res) => {
     try {
         const redirectUri = process.env.NODE_ENV === 'production'
-            ? 'https://renzparagas123.github.io/cll/callback'  // ✅ No hash for BrowserRouter
-            : 'http://localhost:5173/callback';  // ✅ No hash for local
+            ? 'https://renzparagas123.github.io/cll/callback'
+            : 'http://localhost:5173/callback';
 
         const authUrl = `https://auth.lazada.com/oauth/authorize?response_type=code&force_auth=true&redirect_uri=${encodeURIComponent(redirectUri)}&client_id=${process.env.LAZADA_APP_KEY}`;
 
@@ -95,7 +95,6 @@ app.post('/api/lazada/token', async (req, res) => {
         console.log('Exchanging code for token...');
         const tokenData = await lazadaAuth.createAccessToken(code);
 
-        // Check if the response contains an error
         if (tokenData.code !== '0' && tokenData.code !== 0) {
             console.error('Token exchange failed:', tokenData);
             return res.status(400).json({
@@ -209,7 +208,6 @@ app.get('/api/lazada/seller/policy', verifyToken, async (req, res) => {
     try {
         console.log('Fetching seller policy...');
         
-        // Get locale from query parameter or default to 'en_US'
         const locale = req.query.locale || 'en_US';
         
         const policyData = await lazadaAuth.makeRequest(
@@ -218,7 +216,6 @@ app.get('/api/lazada/seller/policy', verifyToken, async (req, res) => {
             { locale: locale }
         );
 
-        // Check if response contains error
         if (policyData.code !== '0' && policyData.code !== 0) {
             console.error('Seller policy fetch failed:', policyData);
             return res.status(400).json({
@@ -340,7 +337,6 @@ app.get('/api/lazada/order/:orderId/items', verifyToken, async (req, res) => {
             orderId
         );
 
-        // Check if response contains error
         if (orderItemsData.code !== '0' && orderItemsData.code !== 0) {
             return res.status(400).json({
                 error: 'Failed to get order items',
@@ -395,7 +391,143 @@ app.post('/api/lazada/orders/items', verifyToken, async (req, res) => {
     }
 });
 
+// ============================================
+// SPONSOR SOLUTIONS - REPORT ENDPOINTS
+// ============================================
 
+// Get Report Overview
+app.get('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (req, res) => {
+    try {
+        const {
+            start_date,
+            end_date,
+            report_type,
+            dimensions,
+            metrics,
+            page = 1,
+            page_size = 20
+        } = req.query;
+
+        console.log('Fetching report overview...');
+
+        // Build query parameters
+        const params = {
+            page: parseInt(page),
+            page_size: parseInt(page_size)
+        };
+
+        // Add optional parameters if provided
+        if (start_date) params.start_date = start_date;
+        if (end_date) params.end_date = end_date;
+        if (report_type) params.report_type = report_type;
+        if (dimensions) params.dimensions = dimensions;
+        if (metrics) params.metrics = metrics;
+
+        const reportData = await lazadaAuth.makeRequest(
+            '/sponsor/solutions/report/getReportOverview',
+            req.accessToken,
+            params
+        );
+
+        // Check if response contains error
+        if (reportData.code !== '0' && reportData.code !== 0) {
+            console.error('Report overview fetch failed:', reportData);
+            return res.status(400).json({
+                error: 'Failed to get report overview',
+                details: reportData.message || 'Unknown error',
+                lazada_code: reportData.code
+            });
+        }
+
+        console.log('Report overview fetched successfully');
+        
+        // Transform the response to include account information
+        const transformedData = {
+            ...reportData,
+            // Add account metadata if available from token
+            account_info: {
+                account: req.account || 'N/A',
+                country: req.country || 'N/A'
+            },
+            // Add pagination info
+            pagination: {
+                current_page: parseInt(page),
+                page_size: parseInt(page_size),
+                total_count: reportData.data?.total_count || 0
+            }
+        };
+
+        res.json(transformedData);
+    } catch (error) {
+        console.error('Report overview error:', error);
+        res.status(500).json({
+            error: 'Failed to get report overview',
+            details: error.response?.data || error.message
+        });
+    }
+});
+
+// Get Report Detail by Report ID
+app.get('/api/lazada/sponsor/solutions/report/:reportId', verifyToken, async (req, res) => {
+    try {
+        const { reportId } = req.params;
+
+        console.log(`Fetching report details for ID: ${reportId}`);
+
+        const reportData = await lazadaAuth.makeRequest(
+            '/sponsor/solutions/report/getReportDetail',
+            req.accessToken,
+            { report_id: reportId }
+        );
+
+        if (reportData.code !== '0' && reportData.code !== 0) {
+            return res.status(400).json({
+                error: 'Failed to get report detail',
+                details: reportData.message,
+                lazada_code: reportData.code
+            });
+        }
+
+        res.json(reportData);
+    } catch (error) {
+        console.error('Report detail error:', error);
+        res.status(500).json({
+            error: 'Failed to get report detail',
+            details: error.response?.data || error.message
+        });
+    }
+});
+
+// Download Report (if available)
+app.get('/api/lazada/sponsor/solutions/report/:reportId/download', verifyToken, async (req, res) => {
+    try {
+        const { reportId } = req.params;
+
+        console.log(`Downloading report: ${reportId}`);
+
+        const reportData = await lazadaAuth.makeRequest(
+            '/sponsor/solutions/report/downloadReport',
+            req.accessToken,
+            { report_id: reportId }
+        );
+
+        if (reportData.code !== '0' && reportData.code !== 0) {
+            return res.status(400).json({
+                error: 'Failed to download report',
+                details: reportData.message,
+                lazada_code: reportData.code
+            });
+        }
+
+        res.json(reportData);
+    } catch (error) {
+        console.error('Report download error:', error);
+        res.status(500).json({
+            error: 'Failed to download report',
+            details: error.response?.data || error.message
+        });
+    }
+});
 
 // ============================================
 // ERROR HANDLING
@@ -445,5 +577,9 @@ app.listen(PORT, () => {
     console.log('  GET  /api/lazada/order/:orderId');
     console.log('  GET  /api/lazada/order/:orderId/items');
     console.log('  POST /api/lazada/orders/items');
+    console.log('\n📊 Sponsor Solutions - Reports:');
+    console.log('  GET  /api/lazada/sponsor/solutions/report/overview');
+    console.log('  GET  /api/lazada/sponsor/solutions/report/:reportId');
+    console.log('  GET  /api/lazada/sponsor/solutions/report/:reportId/download');
     console.log('='.repeat(60));
 });
