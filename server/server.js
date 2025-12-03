@@ -399,8 +399,8 @@ app.post('/api/lazada/orders/items', verifyToken, async (req, res) => {
 app.get('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (req, res) => {
     try {
         const {
-            lastStartDate,  // REQUIRED parameter
-            lastEndDate,    // REQUIRED parameter
+            startDate,      // Changed from lastStartDate
+            endDate,        // Changed from lastEndDate
             dimensions,
             metrics,
             currencyType
@@ -409,26 +409,26 @@ app.get('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (req
         console.log('Fetching report overview with params:', req.query);
 
         // Validate required parameters
-        if (!lastStartDate) {
+        if (!startDate) {
             return res.status(400).json({
                 error: 'Missing required parameter',
-                details: 'lastStartDate is required (format: YYYY-MM-DD)',
+                details: 'startDate is required (format: YYYY-MM-DD)',
                 lazada_code: 'MissingParameter'
             });
         }
 
-        if (!lastEndDate) {
+        if (!endDate) {
             return res.status(400).json({
                 error: 'Missing required parameter',
-                details: 'lastEndDate is required (format: YYYY-MM-DD)',
+                details: 'endDate is required (format: YYYY-MM-DD)',
                 lazada_code: 'MissingParameter'
             });
         }
 
-        // Build query parameters with EXACT naming as Lazada expects
+        // Build query parameters with correct naming
         const params = {
-            lastStartDate: lastStartDate,
-            lastEndDate: lastEndDate
+            startDate: startDate,    // Correct parameter name
+            endDate: endDate          // Correct parameter name
         };
 
         // Add optional parameters if provided
