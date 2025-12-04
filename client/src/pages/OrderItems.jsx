@@ -1,56 +1,236 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import * as XLSX from 'xlsx';
+import { AccountManager } from '../utils/AccountManager.jsx';
 
 function OrderItems({ apiUrl }) {
-  const [accessToken, setAccessToken] = useState(null);
+  const navigate = useNavigate();
+  const [accounts, setAccounts] = useState([]);
   const [orders, setOrders] = useState([]);
-  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [filteredOrders, setFilteredOrders] = useState([]);
+  const [selectedOrders, setSelectedOrders] = useState([]);
   const [orderItems, setOrderItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [openDropdown, setOpenDropdown] = useState(null);
+  const dropdownRef = useRef(null);
 
+  // Filter states
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [accountFilter, setAccountFilter] = useState('all');
+
+  // Set default date filters to yesterday and today
+  const getYesterday = () => {
+    const date = new Date();
+    date.setDate(date.getDate() - 1);
+    return date.toISOString().split('T')[0];
+  };
+
+  const getToday = () => {
+    return new Date().toISOString().split('T')[0];
+  };
+
+  const [dateFrom, setDateFrom] = useState(getYesterday());
+  const [dateTo, setDateTo] = useState(getToday());
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(20);
+
+  // Statistics
+  const [totalOrders, setTotalOrders] = useState(0);
+  const [loadingProgress, setLoadingProgress] = useState({});
+
+  // Close dropdown when clicking outside
   useEffect(() => {
-    // Check if we have a stored access token
-    const token = localStorage.getItem('lazada_access_token');
-    if (token) {
-      setAccessToken(token);
-      fetchOrders(token);
+    function handleClickOutside(event) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setOpenDropdown(null);
+      }
     }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const fetchOrders = async (token) => {
+  useEffect(() => {
+    const allAccounts = AccountManager.getAccounts();
+
+    if (allAccounts.length === 0) {
+      navigate('/', { replace: true });
+      return;
+    }
+
+    setAccounts(allAccounts);
+    fetchAllAccountsOrders(allAccounts);
+  }, [navigate]);
+
+  useEffect(() => {
+    filterOrders();
+  }, [orders, searchQuery, statusFilter, accountFilter, dateTo]);
+
+  const fetchAllAccountsOrders = async (accountsList) => {
     setLoading(true);
     setError(null);
+    setOrders([]);
+
+    // Use the date filter to fetch orders
+    let createdAfter;
+    if (dateFrom) {
+      createdAfter = new Date(dateFrom).toISOString();
+    } else {
+      // Default to 30 days ago if no date filter
+      const defaultDate = new Date();
+      defaultDate.setDate(defaultDate.getDate() - 30);
+      createdAfter = defaultDate.toISOString();
+    }
+
+    // Fetch orders from all accounts in parallel
+    const promises = accountsList.map(account =>
+      fetchAccountOrders(account, createdAfter)
+    );
 
     try {
-      const response = await fetch(`${apiUrl}/lazada/orders?limit=20&offset=0`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
+      const results = await Promise.allSettled(promises);
+
+      // Combine all orders
+      const allOrders = [];
+      results.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          const accountOrders = result.value.map(order => ({
+            ...order,
+            _account_id: accountsList[index].id,
+            _account_name: accountsList[index].account,
+            _account_country: accountsList[index].country
+          }));
+          allOrders.push(...accountOrders);
+        } else {
+          console.error(`Failed to fetch orders for account ${accountsList[index].account}:`, result.reason);
         }
       });
 
-      const data = await response.json();
+      // Sort by created date (newest first)
+      allOrders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-      if (response.ok && data.code === '0') {
-        setOrders(data.data?.orders || []);
-      } else {
-        setError(data.message || 'Failed to fetch orders');
-      }
+      setOrders(allOrders);
+      setTotalOrders(allOrders.length);
     } catch (err) {
-      setError('Network error: ' + err.message);
+      setError('Failed to fetch orders from some accounts');
+      console.error(err);
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchOrderItems = async (orderId) => {
+  const fetchAccountOrders = async (account, createdAfter) => {
+    const accountId = account.id;
+    setLoadingProgress(prev => ({ ...prev, [accountId]: 'loading' }));
+
+    try {
+      let allOrders = [];
+      let offset = 0;
+      const limit = 100;
+      let hasMoreOrders = true;
+
+      // Keep fetching until we get all orders
+      while (hasMoreOrders) {
+        const response = await fetch(
+          `${apiUrl}/lazada/orders?limit=${limit}&offset=${offset}&created_after=${encodeURIComponent(createdAfter)}&sort_by=created_at&sort_direction=DESC`,
+          {
+            headers: {
+              'Authorization': `Bearer ${account.access_token}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+
+        const data = await response.json();
+
+        if (response.ok && (data.code === '0' || data.code === 0)) {
+          const orders = data.data?.orders || [];
+          allOrders = [...allOrders, ...orders];
+
+          // Check if there are more orders to fetch
+          if (orders.length < limit) {
+            hasMoreOrders = false;
+          } else {
+            offset += limit;
+          }
+
+          // Update progress with current count
+          setLoadingProgress(prev => ({
+            ...prev,
+            [accountId]: `loading (${allOrders.length})`
+          }));
+        } else {
+          setLoadingProgress(prev => ({ ...prev, [accountId]: 'error' }));
+          if (data.code === 'InvalidAccessToken') {
+            console.error(`Account ${account.account} has invalid token`);
+          }
+          hasMoreOrders = false;
+        }
+      }
+
+      setLoadingProgress(prev => ({ ...prev, [accountId]: 'success' }));
+      return allOrders;
+    } catch (err) {
+      setLoadingProgress(prev => ({ ...prev, [accountId]: 'error' }));
+      console.error(`Error fetching orders for ${account.account}:`, err);
+      return [];
+    }
+  };
+
+  const filterOrders = () => {
+    let filtered = [...orders];
+
+    // Search filter
+    if (searchQuery) {
+      filtered = filtered.filter(order =>
+        order.order_number?.toString().toLowerCase().includes(searchQuery.toLowerCase()) ||
+        order.order_id?.toString().includes(searchQuery) ||
+        order._account_name?.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+
+    // Status filter
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(order =>
+        order.statuses?.[0]?.toLowerCase() === statusFilter.toLowerCase()
+      );
+    }
+
+    // Account filter
+    if (accountFilter !== 'all') {
+      filtered = filtered.filter(order => order._account_id === accountFilter);
+    }
+
+    // Date To filter (client-side refinement)
+    if (dateTo) {
+      const toDate = new Date(dateTo);
+      toDate.setHours(23, 59, 59, 999);
+      filtered = filtered.filter(order =>
+        new Date(order.created_at) <= toDate
+      );
+    }
+
+    setFilteredOrders(filtered);
+    setCurrentPage(1);
+  };
+
+  const fetchOrderItems = async (orderId, accountId) => {
     setLoading(true);
     setError(null);
-    setSelectedOrder(orderId);
+
+    const account = accounts.find(acc => acc.id === accountId);
+    if (!account) {
+      setError('Account not found');
+      setLoading(false);
+      return;
+    }
 
     try {
       const response = await fetch(`${apiUrl}/lazada/order/${orderId}/items`, {
         headers: {
-          'Authorization': `Bearer ${accessToken}`
+          'Authorization': `Bearer ${account.access_token}`,
+          'Content-Type': 'application/json'
         }
       });
 
@@ -68,196 +248,662 @@ function OrderItems({ apiUrl }) {
     }
   };
 
-  const fetchMultipleOrderItems = async () => {
-    if (orders.length === 0) {
-      setError('No orders available');
-      return;
-    }
+  const handleSelectOrder = (orderId) => {
+    setSelectedOrders(prev =>
+      prev.includes(orderId)
+        ? prev.filter(id => id !== orderId)
+        : [...prev, orderId]
+    );
+  };
 
-    setLoading(true);
-    setError(null);
-
-    // Get first 5 order IDs
-    const orderIds = orders.slice(0, 5).map(order => order.order_id);
-
-    try {
-      const response = await fetch(`${apiUrl}/lazada/orders/items`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`
-        },
-        body: JSON.stringify({ orderIds })
-      });
-
-      const data = await response.json();
-
-      if (response.ok && (data.code === '0' || data.code === 0)) {
-        setOrderItems(data.data || []);
-        setSelectedOrder('multiple');
-      } else {
-        setError(data.details || data.message || 'Failed to fetch multiple order items');
-      }
-    } catch (err) {
-      setError('Network error: ' + err.message);
-    } finally {
-      setLoading(false);
+  const handleSelectAll = () => {
+    if (selectedOrders.length === paginatedOrders.length) {
+      setSelectedOrders([]);
+    } else {
+      setSelectedOrders(paginatedOrders.map(order => order.order_id));
     }
   };
 
-  if (!accessToken) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="bg-white p-8 rounded-lg shadow-md max-w-md w-full text-center">
-          <h2 className="text-2xl font-bold mb-4">Not Authenticated</h2>
-          <p className="text-gray-600 mb-4">Please authenticate with Lazada first</p>
-          <a href="/" className="text-blue-600 hover:underline">
-            Go to Login
-          </a>
-        </div>
-      </div>
-    );
-  }
+  const handleRefresh = () => {
+    setOrders([]);
+    setSelectedOrders([]);
+    setOrderItems([]);
+    fetchAllAccountsOrders(accounts);
+  };
+
+  const handleDateFilterApply = () => {
+    if (!dateFrom) {
+      alert('Please select a "Date From" to fetch orders');
+      return;
+    }
+    fetchAllAccountsOrders(accounts);
+  };
+
+  const clearDateFilters = () => {
+    setDateFrom(getYesterday());
+    setDateTo(getToday());
+  };
+
+  const handleActionClick = (orderId) => {
+    setOpenDropdown(openDropdown === orderId ? null : orderId);
+  };
+
+  const handleArrangeShipment = async (order) => {
+    // Your API call here
+    console.log('Arrange shipment for:', order.order_id);
+    setOpenDropdown(null);
+  };
+
+  const handleCancelOrder = async (order) => {
+    if (window.confirm('Are you sure you want to cancel this order?')) {
+      // Your API call here
+      console.log('Cancel order:', order.order_id);
+      setOpenDropdown(null);
+    }
+  };
+
+  // Export current page to Excel
+  const exportCurrentPageToExcel = () => {
+    if (paginatedOrders.length === 0) {
+      alert('No orders to export on current page');
+      return;
+    }
+
+    const exportData = paginatedOrders.map(order => ({
+      'Account': order._account_name,
+      'Country': order._account_country,
+      'Order Number': order.order_number,
+      'Order ID': order.order_id,
+      'Status': order.statuses?.[0] || 'N/A',
+      'Price': order.price,
+      'Currency': order.currency || 'PHP',
+      'Created Date': new Date(order.created_at).toLocaleDateString(),
+      'Created Time': new Date(order.created_at).toLocaleTimeString(),
+    }));
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(exportData);
+
+    const colWidths = [
+      { wch: 25 }, { wch: 10 }, { wch: 15 }, { wch: 12 },
+      { wch: 12 }, { wch: 10 }, { wch: 8 }, { wch: 12 }, { wch: 12 }
+    ];
+    ws['!cols'] = colWidths;
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Orders');
+    const filename = `Lazada_Orders_Page${currentPage}_${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(wb, filename);
+  };
+
+  // Export all filtered orders to Excel
+  const exportAllFilteredToExcel = () => {
+    if (filteredOrders.length === 0) {
+      alert('No orders to export');
+      return;
+    }
+
+    const exportData = filteredOrders.map(order => ({
+      'Account': order._account_name,
+      'Country': order._account_country,
+      'Order Number': order.order_number,
+      'Order ID': order.order_id,
+      'Status': order.statuses?.[0] || 'N/A',
+      'Price': order.price,
+      'Currency': order.currency || 'PHP',
+      'Created Date': new Date(order.created_at).toLocaleDateString(),
+      'Created Time': new Date(order.created_at).toLocaleTimeString(),
+    }));
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(exportData);
+
+    const colWidths = [
+      { wch: 25 }, { wch: 10 }, { wch: 15 }, { wch: 12 },
+      { wch: 12 }, { wch: 10 }, { wch: 8 }, { wch: 12 }, { wch: 12 }
+    ];
+    ws['!cols'] = colWidths;
+
+    XLSX.utils.book_append_sheet(wb, ws, 'All Orders');
+
+    let dateRangeLabel = '';
+    if (dateFrom && dateTo) {
+      dateRangeLabel = `_${dateFrom}_to_${dateTo}`;
+    } else if (dateFrom) {
+      dateRangeLabel = `_from_${dateFrom}`;
+    } else if (dateTo) {
+      dateRangeLabel = `_until_${dateTo}`;
+    }
+
+    const filename = `Lazada_All_Accounts_Orders${dateRangeLabel}_${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(wb, filename);
+  };
+
+  // Export Order Items to Excel
+  const exportOrderItemsToExcel = () => {
+    if (orderItems.length === 0) {
+      alert('No order items to export');
+      return;
+    }
+
+    const exportData = orderItems.map(item => ({
+      'Order Item ID': item.order_item_id,
+      'Product Name': item.name,
+      'SKU': item.sku,
+      'Variation': item.variation || 'N/A',
+      'Quantity': item.quantity || 1,
+      'Unit Price': item.paid_price,
+      'Currency': item.currency || 'PHP',
+      'Status': item.status || 'N/A',
+    }));
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(exportData);
+
+    const colWidths = [
+      { wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 20 },
+      { wch: 10 }, { wch: 12 }, { wch: 8 }, { wch: 12 }
+    ];
+    ws['!cols'] = colWidths;
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Order Items');
+    const filename = `Lazada_Order_Items_${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(wb, filename);
+  };
+
+  // Pagination
+  const indexOfLastOrder = currentPage * itemsPerPage;
+  const indexOfFirstOrder = indexOfLastOrder - itemsPerPage;
+  const paginatedOrders = filteredOrders.slice(indexOfFirstOrder, indexOfLastOrder);
+  const totalPages = Math.ceil(filteredOrders.length / itemsPerPage);
+
+  const uniqueStatuses = [...new Set(orders.flatMap(order => order.statuses || []))];
 
   return (
-    <div className="min-h-screen bg-gray-100 p-8">
-      <div className="max-w-7xl mx-auto">
-        <h1 className="text-3xl font-bold mb-8">Lazada Order Items</h1>
-
-        {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6">
-            {error}
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Orders List */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-semibold">Orders</h2>
-              <button
-                onClick={fetchMultipleOrderItems}
-                disabled={loading || orders.length === 0}
-                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-              >
-                Get Items (First 5)
-              </button>
+    <div>
+      {/* Account Status Banner */}
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 mb-6 border border-blue-200">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Connected Accounts</h3>
+            <div className="flex flex-wrap gap-3">
+              {accounts.map(account => (
+                <div key={account.id} className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg shadow-sm">
+                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-semibold text-sm">
+                    {account.account?.charAt(0)?.toUpperCase()}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{account.account}</p>
+                    <p className="text-xs text-gray-500 uppercase">{account.country}</p>
+                  </div>
+                  {loadingProgress[account.id] === 'success' && (
+                    <span className="text-green-600 text-xs">✓</span>
+                  )}
+                  {loadingProgress[account.id] && loadingProgress[account.id].toString().startsWith('loading') && (
+                    <span className="text-blue-600 text-xs flex items-center gap-1">
+                      <span className="animate-spin inline-block">⟳</span>
+                      {loadingProgress[account.id].toString().includes('(') && (
+                        <span>{loadingProgress[account.id].toString().match(/\((\d+)\)/)?.[1]}</span>
+                      )}
+                    </span>
+                  )}
+                  {loadingProgress[account.id] === 'error' && (
+                    <span className="text-red-600 text-xs">✗</span>
+                  )}
+                </div>
+              ))}
             </div>
+          </div>
+          <div className="text-right">
+            <p className="text-2xl font-bold text-blue-600">{orders.length}</p>
+            <p className="text-sm text-gray-600">Total Orders</p>
+          </div>
+        </div>
+      </div>
 
-            {loading && orders.length === 0 ? (
-              <p className="text-gray-500">Loading orders...</p>
-            ) : orders.length === 0 ? (
-              <p className="text-gray-500">No orders found</p>
-            ) : (
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {orders.map((order) => (
-                  <div
-                    key={order.order_id}
-                    className={`p-4 border rounded cursor-pointer hover:bg-blue-50 transition ${
-                      selectedOrder === order.order_id ? 'bg-blue-100 border-blue-500' : ''
-                    }`}
-                    onClick={() => fetchOrderItems(order.order_id)}
-                  >
-                    <div className="font-semibold">Order #{order.order_number}</div>
-                    <div className="text-sm text-gray-600">
-                      ID: {order.order_id}
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      Status: <span className="font-medium">{order.statuses?.[0]}</span>
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      Price: {order.price} {order.currency || 'PHP'}
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      {new Date(order.created_at).toLocaleString()}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+      {/* Header */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">All Orders</h1>
+          <p className="text-gray-600 mt-1">
+            {loading ? 'Loading...' : `${filteredOrders.length} orders from ${accounts.length} account(s)`}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={exportCurrentPageToExcel}
+            disabled={paginatedOrders.length === 0}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center gap-2"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Export Page
+          </button>
+          <button
+            onClick={exportAllFilteredToExcel}
+            disabled={filteredOrders.length === 0}
+            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center gap-2"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Export All ({filteredOrders.length})
+          </button>
+          <button
+            onClick={handleRefresh}
+            disabled={loading}
+            className="bg-white text-gray-700 px-4 py-2 rounded-lg border hover:bg-gray-50 disabled:opacity-50 transition"
+          >
+            🔄 Refresh
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6">
+          <strong>Error: </strong>{error}
+        </div>
+      )}
+
+      {/* Filters */}
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <h2 className="text-lg font-semibold mb-4">Filters</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {/* Search */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Search</label>
+            <input
+              type="text"
+              placeholder="Order number, ID, or account..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
 
-          {/* Order Items */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-xl font-semibold mb-4">Order Items</h2>
+          {/* Account Filter */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Account</label>
+            <select
+              value={accountFilter}
+              onChange={(e) => setAccountFilter(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">All Accounts</option>
+              {accounts.map(account => (
+                <option key={account.id} value={account.id}>
+                  {account.account} ({account.country})
+                </option>
+              ))}
+            </select>
+          </div>
 
-            {loading && selectedOrder ? (
-              <p className="text-gray-500">Loading items...</p>
-            ) : !selectedOrder ? (
-              <p className="text-gray-500">Select an order to view items</p>
-            ) : orderItems.length === 0 ? (
-              <p className="text-gray-500">No items found</p>
-            ) : (
-              <div className="space-y-4 max-h-96 overflow-y-auto">
-                {orderItems.map((item, index) => (
-                  <div key={index} className="p-4 border rounded">
-                    <div className="font-semibold">{item.name}</div>
-                    <div className="text-sm text-gray-600 mt-1">
-                      SKU: {item.sku}
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      Order Item ID: {item.order_item_id}
-                    </div>
-                    <div className="flex justify-between items-center mt-2">
-                      <span className="text-sm">
-                        Quantity: <span className="font-medium">{item.quantity || 1}</span>
-                      </span>
-                      <span className="text-sm font-semibold">
-                        {item.paid_price} {item.currency || 'PHP'}
-                      </span>
-                    </div>
-                    {item.variation && (
-                      <div className="text-xs text-gray-500 mt-1">
-                        Variation: {item.variation}
-                      </div>
-                    )}
-                    {item.status && (
-                      <div className="mt-2">
-                        <span className="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">
-                          {item.status}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+          {/* Status Filter */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">All Statuses</option>
+              {uniqueStatuses.map(status => (
+                <option key={status} value={status}>{status}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Date From */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Date From</label>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {/* Date To */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Date To</label>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {/* Apply Date Filter */}
+          <div className="flex items-end">
+            <button
+              onClick={handleDateFilterApply}
+              disabled={loading}
+              className="w-full px-3 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-md transition disabled:opacity-50"
+            >
+              Apply Date Filter
+            </button>
           </div>
         </div>
 
-        {/* Summary Card */}
-        {orderItems.length > 0 && (
-          <div className="bg-white rounded-lg shadow-md p-6 mt-6">
-            <h3 className="text-lg font-semibold mb-2">Summary</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div>
-                <div className="text-sm text-gray-600">Total Items</div>
-                <div className="text-2xl font-bold">{orderItems.length}</div>
-              </div>
-              <div>
-                <div className="text-sm text-gray-600">Total Quantity</div>
-                <div className="text-2xl font-bold">
-                  {orderItems.reduce((sum, item) => sum + (item.quantity || 1), 0)}
-                </div>
-              </div>
-              <div>
-                <div className="text-sm text-gray-600">Total Value</div>
-                <div className="text-2xl font-bold">
-                  {orderItems.reduce((sum, item) => sum + parseFloat(item.paid_price || 0), 0).toFixed(2)}
-                </div>
-              </div>
-              <div>
-                <div className="text-sm text-gray-600">Orders Selected</div>
-                <div className="text-2xl font-bold">
-                  {selectedOrder === 'multiple' ? '5' : '1'}
-                </div>
-              </div>
-            </div>
+        {/* Reset to Yesterday-Today Button */}
+        <div className="mt-4">
+          <button
+            onClick={clearDateFilters}
+            className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-md hover:bg-gray-50 transition"
+          >
+            Reset to Yesterday-Today
+          </button>
+        </div>
+      </div>
+
+      {/* Orders Table */}
+      <div className="bg-white rounded-lg shadow-md overflow-hidden mb-6">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left">
+                  <input
+                    type="checkbox"
+                    checked={selectedOrders.length === paginatedOrders.length && paginatedOrders.length > 0}
+                    onChange={handleSelectAll}
+                    className="rounded"
+                  />
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Account
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Order Number
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Status
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Price
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Created At
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {loading && orders.length === 0 ? (
+                <tr>
+                  <td colSpan="7" className="px-6 py-12 text-center text-gray-500">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                    Loading orders from all accounts...
+                  </td>
+                </tr>
+              ) : paginatedOrders.length === 0 ? (
+                <tr>
+                  <td colSpan="7" className="px-6 py-12 text-center text-gray-500">
+                    No orders found
+                  </td>
+                </tr>
+              ) : (
+                paginatedOrders.map((order) => (
+                  <tr key={`${order._account_id}-${order.order_id}`} className="hover:bg-gray-50">
+                    <td className="px-6 py-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedOrders.includes(order.order_id)}
+                        onChange={() => handleSelectOrder(order.order_id)}
+                        className="rounded"
+                      />
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-semibold text-xs">
+                          {order._account_name?.charAt(0)?.toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium text-gray-900">
+                            {order._account_name}
+                          </div>
+                          <div className="text-xs text-gray-500 uppercase">
+                            {order._account_country}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">
+                        {order.order_number}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        ID: {order.order_id}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                        {order.statuses?.[0] || 'N/A'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {order.price} {order.currency || 'PHP'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {new Date(order.created_at).toLocaleDateString()}
+                      <br />
+                      <span className="text-xs">
+                        {new Date(order.created_at).toLocaleTimeString()}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm relative">
+                      <button
+                        onClick={() => fetchOrderItems(order.order_id, order._account_id)}
+                        className="text-blue-600 hover:text-blue-900 font-medium mr-2"
+                      >
+                        View Items
+                      </button>
+
+                      <button
+                        onClick={() => handleActionClick(order.order_id)}
+                        className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                      >
+                        More Actions
+                        <svg className="ml-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinej="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+
+                      {openDropdown === order.order_id && (
+                    <div 
+                      ref={dropdownRef}
+                      className="absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10"
+                    >
+                      <div className="py-1">
+                        <button
+                          onClick={() => handleArrangeShipment(order)}
+                          className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Arrange Shipment
+                        </button>
+                        <button
+                          onClick={() => console.log('Recreate Package')}
+                          className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Recreate Package
+                        </button>
+                        <button
+                          onClick={() => console.log('Request Extension')}
+                          className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Request Extension
+                        </button>
+                        <button
+                          onClick={() => console.log('Logistics Status')}
+                          className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Logistics Status
+                        </button>
+                        <button
+                          onClick={() => console.log('Print AWB')}
+                          className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Print AWB
+                        </button>
+                        <button
+                          onClick={() => console.log('Print Packing List')}
+                          className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Print Packing List
+                        </button>
+                        <button
+                          onClick={() => console.log('Print Pick List')}
+                          className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Print Pick List
+                        </button>
+                        <button
+                          onClick={() => console.log('Seller Note')}
+                          className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Seller Note
+                        </button>
+                        <div className="border-t border-gray-100"></div>
+                        <button
+                          onClick={() => handleCancelOrder(order)}
+                          className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100"
+                        >
+                          Cancel Order
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+
+    {/* Pagination */}
+    {totalPages > 1 && (
+      <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200">
+        <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm text-gray-700">
+              Showing <span className="font-medium">{indexOfFirstOrder + 1}</span> to{' '}
+              <span className="font-medium">
+                {Math.min(indexOfLastOrder, filteredOrders.length)}
+              </span>{' '}
+              of <span className="font-medium">{filteredOrders.length}</span> results
+            </p>
           </div>
-        )}
+          <div>
+            <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                disabled={currentPage === 1}
+                className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Previous
+              </button>
+              {[...Array(Math.min(totalPages, 5))].map((_, idx) => {
+                const pageNum = idx + 1;
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
+                      currentPage === pageNum
+                        ? 'z-10 bg-blue-50 border-blue-500 text-blue-600'
+                        : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                disabled={currentPage === totalPages}
+                className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Next
+              </button>
+            </nav>
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
+
+  {/* Order Items Table */}
+  {orderItems.length > 0 && (
+    <div className="bg-white rounded-lg shadow-md overflow-hidden">
+      <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+        <h2 className="text-lg font-semibold">Order Items ({orderItems.length})</h2>
+        <button
+          onClick={exportOrderItemsToExcel}
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2 text-sm"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          Export Items
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Product
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                SKU
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Quantity
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Price
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Status
+              </th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {orderItems.map((item, index) => (
+              <tr key={index} className="hover:bg-gray-50">
+                <td className="px-6 py-4">
+                  <div className="text-sm font-medium text-gray-900">{item.name}</div>
+                  {item.variation && (
+                    <div className="text-xs text-gray-500">{item.variation}</div>
+                  )}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {item.sku}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  {item.quantity || 1}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  {item.paid_price} {item.currency || 'PHP'}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <span className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                    {item.status || 'N/A'}
+                  </span> 
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
-  );
+  )}
+</div>
+);
 }
-
 export default OrderItems;

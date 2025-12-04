@@ -1,204 +1,149 @@
-import { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { AccountManager } from '../utils/AccountManager.jsx';
 
 function LazadaAuth({ apiUrl }) {
-  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(false);
-
-  useEffect(() => {
-    // Check if we got the authorization code from Lazada
-    const code = searchParams.get('code');
-    const errorParam = searchParams.get('error');
-    
-    if (errorParam) {
-      setError(`Authorization failed: ${errorParam}`);
-      return;
-    }
-
-    if (code) {
-      console.log('Received authorization code, exchanging for token...');
-      exchangeCodeForToken(code);
-    }
-  }, [searchParams]);
-
-  const exchangeCodeForToken = async (code) => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      console.log('Sending code to backend...');
-      const response = await fetch(`${apiUrl}/lazada/token`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ code }),
-      });
-
-      const data = await response.json();
-      console.log('Token exchange response:', data);
-
-      if (response.ok && data.success) {
-        // Store tokens securely
-        localStorage.setItem('lazada_access_token', data.access_token);
-        localStorage.setItem('lazada_refresh_token', data.refresh_token);
-        localStorage.setItem('lazada_expires_in', data.expires_in);
-        localStorage.setItem('lazada_country', data.country);
-        localStorage.setItem('lazada_account', data.account);
-        
-        // Store expiration time
-        const expirationTime = Date.now() + (data.expires_in * 1000);
-        localStorage.setItem('lazada_token_expires_at', expirationTime);
-
-        setSuccess(true);
-        
-        // Redirect to orders page immediately - use navigate with replace
-        setTimeout(() => {
-          navigate('/orders', { replace: true });
-        }, 1500);
-      } else {
-        setError(data.details || data.error || 'Failed to authenticate');
-      }
-    } catch (err) {
-      console.error('Network error:', err);
-      setError('Network error: ' + err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleLogin = async () => {
     setLoading(true);
     setError(null);
 
     try {
-      console.log('Getting authorization URL...');
       const response = await fetch(`${apiUrl}/lazada/auth-url`);
       const data = await response.json();
       
-      console.log('Auth URL received:', data.authUrl);
-      console.log('Redirect URI:', data.redirectUri);
-      
-      // Redirect to Lazada authorization page
-      window.location.href = data.authUrl;
+      if (response.ok && data.authUrl) {
+        // Redirect to Lazada
+        window.location.href = data.authUrl;
+      } else {
+        setError('Failed to get authorization URL');
+        setLoading(false);
+      }
     } catch (err) {
-      console.error('Failed to get authorization URL:', err);
-      setError('Failed to get authorization URL: ' + err.message);
+      setError('Network error: ' + err.message);
       setLoading(false);
     }
   };
 
-  const handleLogout = () => {
-    // Clear all Lazada tokens
-    localStorage.removeItem('lazada_access_token');
-    localStorage.removeItem('lazada_refresh_token');
-    localStorage.removeItem('lazada_expires_in');
-    localStorage.removeItem('lazada_country');
-    localStorage.removeItem('lazada_account');
-    localStorage.removeItem('lazada_token_expires_at');
-    
-    setSuccess(false);
-    setError(null);
-  };
+  // Check if already authenticated
+  const accounts = AccountManager.getAccounts();
+  const isAuthenticated = accounts.length > 0;
 
-  // Check if user is already authenticated
-  const isAuthenticated = localStorage.getItem('lazada_access_token');
+  if (isAuthenticated) {
+    // Already have accounts, show option to add more or go to orders
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
+        <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-8">
+          <div className="text-center mb-6">
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">Welcome Back!</h1>
+            <p className="text-gray-600">You have {accounts.length} account(s) connected</p>
+          </div>
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        <div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Lazada Integration
-          </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            Connect your Lazada seller account
-          </p>
-        </div>
+          <div className="space-y-4 mb-6">
+            {accounts.map(account => (
+              <div key={account.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-semibold">
+                  {account.account?.charAt(0)?.toUpperCase()}
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-900">{account.account}</p>
+                  <p className="text-xs text-gray-500 uppercase">{account.country}</p>
+                </div>
+              </div>
+            ))}
+          </div>
 
-        <div className="bg-white py-8 px-4 shadow-lg rounded-lg sm:px-10">
           {error && (
-            <div className="mb-4 bg-red-50 border border-red-400 text-red-700 px-4 py-3 rounded relative">
-              <strong className="font-bold">Error: </strong>
-              <span className="block sm:inline">{error}</span>
+            <div className="mb-4 bg-red-50 border border-red-400 text-red-700 px-4 py-3 rounded">
+              <strong>Error: </strong>{error}
             </div>
           )}
 
-          {success && (
-            <div className="mb-4 bg-green-50 border border-green-400 text-green-700 px-4 py-3 rounded relative">
-              <strong className="font-bold">Success! </strong>
-              <span className="block sm:inline">
-                Authentication successful. Taking you to your orders...
-              </span>
-            </div>
-          )}
+          <div className="space-y-3">
+            <button
+              onClick={() => navigate('/orders')}
+              className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 transition font-semibold"
+            >
+              Go to Orders
+            </button>
 
-          {loading ? (
-            <div className="text-center">
-              <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-              <p className="mt-4 text-gray-600">Processing...</p>
-            </div>
-          ) : isAuthenticated && !success ? (
-            <div className="space-y-4">
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <p className="text-green-800 font-semibold mb-2">✓ Already Connected</p>
-                <p className="text-sm text-green-700">
-                  Account: {localStorage.getItem('lazada_account')}
-                </p>
-                <p className="text-sm text-green-700">
-                  Country: {localStorage.getItem('lazada_country')?.toUpperCase()}
-                </p>
-              </div>
-              <button
-                onClick={() => navigate('/orders')}
-                className="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition"
-              >
-                View Orders
-              </button>
-              <button
-                onClick={handleLogout}
-                className="w-full flex justify-center py-3 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition"
-              >
-                Disconnect
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <h3 className="text-sm font-semibold text-blue-900 mb-2">What happens next?</h3>
-                <ol className="text-xs text-blue-800 space-y-1 list-decimal list-inside">
-                  <li>You'll be redirected to Lazada</li>
-                  <li>Select your country and log in</li>
-                  <li>Authorize this application</li>
-                  <li>You'll be redirected back here</li>
-                </ol>
-              </div>
-
+            {accounts.length < 5 && (
               <button
                 onClick={handleLogin}
-                className="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition transform hover:scale-105"
+                disabled={loading}
+                className="w-full bg-white text-blue-600 border-2 border-blue-600 py-3 px-4 rounded-lg hover:bg-blue-50 transition font-semibold disabled:opacity-50"
               >
-                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-                Connect to Lazada
+                {loading ? 'Connecting...' : 'Add Another Account'}
               </button>
+            )}
 
-              <p className="text-xs text-center text-gray-500">
-                Callback URL: https://renzparagas123.github.io/cll/callback
-              </p>
-            </div>
+            <button
+              onClick={() => {
+                if (window.confirm('Are you sure you want to logout from all accounts?')) {
+                  AccountManager.clearAll();
+                  window.location.reload();
+                }
+              }}
+              className="w-full bg-white text-red-600 border border-red-300 py-3 px-4 rounded-lg hover:bg-red-50 transition font-semibold"
+            >
+              Logout All Accounts
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
+      <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-8">
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Lazada Integration</h1>
+          <p className="text-gray-600">Connect your Lazada seller account</p>
+        </div>
+
+        {error && (
+          <div className="mb-4 bg-red-50 border border-red-400 text-red-700 px-4 py-3 rounded">
+            <strong>Error: </strong>{error}
+          </div>
+        )}
+
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+          <h3 className="text-sm font-semibold text-blue-900 mb-2">Quick Setup:</h3>
+          <ol className="text-xs text-blue-800 space-y-1 list-decimal list-inside">
+            <li>Click "Connect to Lazada"</li>
+            <li>Log in to your Lazada seller account</li>
+            <li>Authorize the application</li>
+            <li>You'll be taken directly to your orders</li>
+          </ol>
+        </div>
+
+        <button
+          onClick={handleLogin}
+          disabled={loading}
+          className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition font-semibold flex items-center justify-center"
+        >
+          {loading ? (
+            <>
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+              Connecting...
+            </>
+          ) : (
+            <>
+              <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              Connect to Lazada
+            </>
           )}
-        </div>
+        </button>
 
-        <div className="text-center">
-          <p className="text-xs text-gray-500">
-            Powered by Lazada Open Platform API
-          </p>
-        </div>
+        <p className="text-xs text-center text-gray-500 mt-4">
+          Secure OAuth 2.0 authentication
+        </p>
       </div>
     </div>
   );
