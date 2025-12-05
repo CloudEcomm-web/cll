@@ -393,8 +393,12 @@ app.post('/api/lazada/orders/items', verifyToken, async (req, res) => {
 
 
 
-// Get Report Overview - CORRECTED VERSION
-app.get('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (req, res) => {
+// ============================================
+// SPONSOR SOLUTIONS - REPORT ENDPOINTS (FIXED)
+// ============================================
+
+// Get Report Overview - Use POST method
+app.post('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (req, res) => {
     try {
         const {
             startDate,
@@ -402,12 +406,13 @@ app.get('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (req
             dimensions,
             metrics,
             currencyType
-        } = req.query;
+        } = req.body;
 
         console.log('\n' + '='.repeat(60));
-        console.log('REPORT OVERVIEW API REQUEST');
+        console.log('REPORT OVERVIEW API REQUEST (POST)');
         console.log('='.repeat(60));
-        console.log('Query params received:', req.query);
+        console.log('Body params received:', req.body);
+        console.log('Access token:', req.accessToken?.substring(0, 20) + '...');
 
         if (!startDate || !endDate) {
             return res.status(400).json({
@@ -421,7 +426,7 @@ app.get('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (req
         console.log('   startDate:', startDate);
         console.log('   endDate:', endDate);
 
-        // Use exact parameter names that Lazada API expects
+        // Build params object
         const params = {
             startDate: startDate.trim(),
             endDate: endDate.trim()
@@ -441,14 +446,15 @@ app.get('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (req
             console.log('   currencyType:', currencyType);
         }
 
-        console.log('\n📤 Sending to Lazada API:');
+        console.log('\n📤 Sending to Lazada API via POST:');
         console.log('   Path:', '/sponsor/solutions/report/getReportOverview');
-        console.log('   Params:', JSON.stringify(params, null, 2));
+        console.log('   Body Params:', JSON.stringify(params, null, 2));
 
         const reportData = await lazadaAuth.makeRequest(
             '/sponsor/solutions/report/getReportOverview',
             req.accessToken,
-            params
+            params,
+            'POST'  // Use POST method
         );
 
         console.log('\n📥 Response received:');
@@ -494,9 +500,8 @@ app.get('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (req
     }
 });
 
-// ALTERNATIVE: Try using POST instead of GET
-// Some Lazada APIs might require POST for certain parameters
-app.post('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (req, res) => {
+// Also keep GET endpoint as fallback
+app.get('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (req, res) => {
     try {
         const {
             startDate,
@@ -504,18 +509,12 @@ app.post('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (re
             dimensions,
             metrics,
             currencyType
-        } = req.body;
-
-        console.log('\n' + '='.repeat(60));
-        console.log('REPORT OVERVIEW API REQUEST (POST)');
-        console.log('='.repeat(60));
-        console.log('Body params received:', req.body);
+        } = req.query;
 
         if (!startDate || !endDate) {
             return res.status(400).json({
                 error: 'Missing required parameters',
-                details: 'Both startDate and endDate are required (format: YYYY-MM-DD)',
-                received: { startDate, endDate }
+                details: 'Both startDate and endDate are required (format: YYYY-MM-DD)'
             });
         }
 
@@ -528,13 +527,13 @@ app.post('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (re
         if (metrics) params.metrics = metrics;
         if (currencyType) params.currencyType = currencyType;
 
-        console.log('📤 POST Request Params:', JSON.stringify(params, null, 2));
-
+        console.log('📤 GET request - trying with query params');
+        
         const reportData = await lazadaAuth.makeRequest(
             '/sponsor/solutions/report/getReportOverview',
             req.accessToken,
             params,
-            'POST' // Specify POST method
+            'GET'
         );
 
         if (reportData.code !== '0' && reportData.code !== 0) {
@@ -542,18 +541,18 @@ app.post('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (re
                 error: 'Lazada API Error',
                 code: reportData.code,
                 message: reportData.message,
-                type: reportData.type,
-                request_id: reportData.request_id
+                hint: 'Try using POST method instead: POST /api/lazada/sponsor/solutions/report/overview'
             });
         }
 
         res.json(reportData);
     } catch (error) {
-        console.error('POST Request error:', error);
+        console.error('GET Request error:', error);
         res.status(500).json({
             error: 'Request failed',
             message: error.message,
-            details: error.response?.data
+            details: error.response?.data,
+            hint: 'Try using POST method instead'
         });
     }
 });

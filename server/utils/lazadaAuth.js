@@ -46,7 +46,6 @@ class LazadaAuth {
       code: code,
     };
 
-    // Generate signature
     const sign = this.generateSignature(apiPath, params);
     params.sign = sign;
 
@@ -58,8 +57,6 @@ class LazadaAuth {
       );
 
       console.log('Token creation response:', response.data);
-      
-      // Lazada returns the data in response.data
       return response.data;
     } catch (error) {
       console.error('Lazada Token Creation Error:', {
@@ -101,49 +98,85 @@ class LazadaAuth {
     }
   }
 
-// Make authenticated API request (GET) - WITH COMPREHENSIVE DEBUGGING
-  async makeRequest(apiPath, accessToken, additionalParams = {}) {
+  // Make authenticated API request (GET or POST)
+  async makeRequest(apiPath, accessToken, additionalParams = {}, method = 'GET') {
     const timestamp = this.getTimestamp();
 
-    const params = {
+    // System parameters (always in query string for signature)
+    const systemParams = {
       app_key: this.appKey,
       timestamp: timestamp.toString(),
       sign_method: 'sha256',
       access_token: accessToken,
-      ...additionalParams,
     };
 
     console.log('\n🔧 LAZADA AUTH - makeRequest');
+    console.log('   Method:', method);
     console.log('   API Path:', apiPath);
     console.log('   Additional Params:', JSON.stringify(additionalParams, null, 2));
-    console.log('\n   All Params (before signature):');
-    console.log('   ├─ app_key:', params.app_key);
-    console.log('   ├─ timestamp:', params.timestamp);
-    console.log('   ├─ sign_method:', params.sign_method);
-    console.log('   ├─ access_token:', params.access_token?.substring(0, 20) + '...');
-    
-    // Log each additional param
-    Object.keys(additionalParams).forEach(key => {
-      console.log(`   ├─ ${key}:`, additionalParams[key]);
+
+    // For signature calculation, include ALL parameters
+    const allParamsForSignature = {
+      ...systemParams,
+      ...additionalParams
+    };
+
+    console.log('\n   All Params for Signature:');
+    Object.keys(allParamsForSignature).forEach(key => {
+      const value = key === 'access_token' 
+        ? allParamsForSignature[key]?.substring(0, 20) + '...'
+        : allParamsForSignature[key];
+      console.log(`   ├─ ${key}:`, value);
     });
 
-    const sign = this.generateSignature(apiPath, params);
-    params.sign = sign;
-
+    // Generate signature with ALL parameters
+    const sign = this.generateSignature(apiPath, allParamsForSignature);
+    
     console.log('   └─ sign:', sign);
     console.log('\n   Full URL:', `${this.apiUrl}${apiPath}`);
-    
-    // Show what axios will actually send
-    const queryString = new URLSearchParams(params).toString();
-    console.log('   Query String Length:', queryString.length);
-    console.log('   Full Request URL:', `${this.apiUrl}${apiPath}?${queryString.substring(0, 100)}...`);
 
     try {
-      console.log('\n   📡 Making GET request...');
-      const response = await axios.get(`${this.apiUrl}${apiPath}`, { 
-        params,
-        timeout: 30000 
-      });
+      let response;
+
+      if (method === 'POST') {
+        // For POST: system params + sign in query string, data params in body
+        const queryParams = {
+          ...systemParams,
+          sign: sign
+        };
+
+        console.log('\n   📡 Making POST request...');
+        console.log('   Query Params:', Object.keys(queryParams).join(', '));
+        console.log('   Body Params:', JSON.stringify(additionalParams, null, 2));
+
+        response = await axios.post(
+          `${this.apiUrl}${apiPath}`,
+          additionalParams,  // Send business params in body
+          { 
+            params: queryParams,  // Send system params in query
+            timeout: 30000,
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+      } else {
+        // For GET: everything in query string
+        const allParams = {
+          ...systemParams,
+          ...additionalParams,
+          sign: sign
+        };
+
+        console.log('\n   📡 Making GET request...');
+        const queryString = new URLSearchParams(allParams).toString();
+        console.log('   Query String Length:', queryString.length);
+
+        response = await axios.get(`${this.apiUrl}${apiPath}`, { 
+          params: allParams,
+          timeout: 30000 
+        });
+      }
       
       console.log('   ✅ HTTP Status:', response.status);
       console.log('   ✅ Response Code:', response.data?.code);
@@ -163,84 +196,30 @@ class LazadaAuth {
     }
   }
 
-  // Make authenticated API request (POST)
+  // Make authenticated API request (POST) - kept for backward compatibility
   async makePostRequest(apiPath, accessToken, bodyParams = {}) {
-    const timestamp = this.getTimestamp();
-
-    const params = {
-      app_key: this.appKey,
-      timestamp: timestamp.toString(),
-      sign_method: 'sha256',
-      access_token: accessToken,
-    };
-
-    const sign = this.generateSignature(apiPath, params);
-    params.sign = sign;
-
-    try {
-      const response = await axios.post(
-        `${this.apiUrl}${apiPath}`,
-        bodyParams,
-        { params }
-      );
-      return response.data;
-    } catch (error) {
-      console.error('Lazada API POST Request Error:', error.response?.data || error.message);
-      throw error;
-    }
+    return this.makeRequest(apiPath, accessToken, bodyParams, 'POST');
   }
 
   // Get Order Items (specific implementation)
   async getOrderItems(accessToken, orderId) {
-    const apiPath = '/order/items/get';
-    const timestamp = this.getTimestamp();
-
-    const params = {
-      app_key: this.appKey,
-      timestamp: timestamp.toString(),
-      sign_method: 'sha256',
-      access_token: accessToken,
-      order_id: orderId.toString(),
-    };
-
-    const sign = this.generateSignature(apiPath, params);
-    params.sign = sign;
-
-    try {
-      const response = await axios.get(`${this.apiUrl}${apiPath}`, { params });
-      return response.data;
-    } catch (error) {
-      console.error('Lazada Get Order Items Error:', error.response?.data || error.message);
-      throw error;
-    }
+    return this.makeRequest(
+      '/order/items/get',
+      accessToken,
+      { order_id: orderId.toString() },
+      'GET'
+    );
   }
 
   // Get Multiple Order Items
   async getMultipleOrderItems(accessToken, orderIds) {
-    const apiPath = '/orders/items/get';
-    const timestamp = this.getTimestamp();
-
-    // Convert array of order IDs to JSON string
     const orderIdsJson = JSON.stringify(orderIds);
-
-    const params = {
-      app_key: this.appKey,
-      timestamp: timestamp.toString(),
-      sign_method: 'sha256',
-      access_token: accessToken,
-      order_ids: orderIdsJson,
-    };
-
-    const sign = this.generateSignature(apiPath, params);
-    params.sign = sign;
-
-    try {
-      const response = await axios.get(`${this.apiUrl}${apiPath}`, { params });
-      return response.data;
-    } catch (error) {
-      console.error('Lazada Get Multiple Order Items Error:', error.response?.data || error.message);
-      throw error;
-    }
+    return this.makeRequest(
+      '/orders/items/get',
+      accessToken,
+      { order_ids: orderIdsJson },
+      'GET'
+    );
   }
 }
 
