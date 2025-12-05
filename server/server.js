@@ -391,14 +391,6 @@ app.post('/api/lazada/orders/items', verifyToken, async (req, res) => {
     }
 });
 
-
-
-// Get Report Overview - Using GET with all params in query string
-// ============================================
-// SPONSOR SOLUTIONS - REPORT ENDPOINTS (FIXED - GET METHOD)
-// ============================================
-
-// Get Report Overview - Using GET with all params in query string
 app.get('/api/lazada/sponsor/solutions/report/getReportOverview', verifyToken, async (req, res) => {
     try {
         const {
@@ -422,10 +414,28 @@ app.get('/api/lazada/sponsor/solutions/report/getReportOverview', verifyToken, a
             });
         }
 
-        // Map to Lazada's expected parameter names (without "last" prefix)
+        // Calculate previous period dates (same duration as selected period)
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        const duration = Math.ceil((end - start) / (1000 * 60 * 60 * 24)); // days
+        
+        const lastEnd = new Date(start);
+        lastEnd.setDate(lastEnd.getDate() - 1); // day before start
+        
+        const lastStart = new Date(lastEnd);
+        lastStart.setDate(lastStart.getDate() - duration);
+
+        // Format dates as YYYY-MM-DD
+        const formatDate = (date) => date.toISOString().split('T')[0];
+
+        // Lazada API requires BOTH current and previous period dates
         const params = {
             startDate: startDate.trim(),
-            endDate: endDate.trim()
+            endDate: endDate.trim(),
+            lastStartDate: formatDate(lastStart),
+            lastEndDate: formatDate(lastEnd),
+            bizCode: 'sponsoredSearch',
+            useRtTable: 'false'
         };
 
         // Add optional parameters
@@ -433,9 +443,16 @@ app.get('/api/lazada/sponsor/solutions/report/getReportOverview', verifyToken, a
         if (metrics) params.metrics = metrics;
         if (currencyType) params.currencyType = currencyType;
 
-        console.log('✅ Params for Lazada API:');
-        console.log('   startDate:', params.startDate);
-        console.log('   endDate:', params.endDate);
+        console.log('✅ Params for Lazada API (comparing two periods):');
+        console.log('   Current Period:');
+        console.log('     startDate:', params.startDate);
+        console.log('     endDate:', params.endDate);
+        console.log('   Previous Period (for comparison):');
+        console.log('     lastStartDate:', params.lastStartDate);
+        console.log('     lastEndDate:', params.lastEndDate);
+        console.log('   Other params:');
+        console.log('     bizCode:', params.bizCode);
+        console.log('     useRtTable:', params.useRtTable);
         if (dimensions) console.log('   dimensions:', dimensions);
         if (metrics) console.log('   metrics:', metrics);
         if (currencyType) console.log('   currencyType:', currencyType);
@@ -490,6 +507,8 @@ app.get('/api/lazada/sponsor/solutions/report/getReportOverview', verifyToken, a
         });
     }
 });
+
+
 // ============================================
 // ERROR HANDLING
 // ============================================
