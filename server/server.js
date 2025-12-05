@@ -391,12 +391,9 @@ app.post('/api/lazada/orders/items', verifyToken, async (req, res) => {
     }
 });
 
-// ============================================
-// SPONSOR SOLUTIONS - REPORT ENDPOINTS
-// ============================================
 
-// Get Report Overview
-// Get Report Overview - FIXED VERSION
+
+// Get Report Overview - CORRECTED VERSION
 app.get('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (req, res) => {
     try {
         const {
@@ -411,7 +408,6 @@ app.get('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (req
         console.log('REPORT OVERVIEW API REQUEST');
         console.log('='.repeat(60));
         console.log('Query params received:', req.query);
-        console.log('Access token:', req.accessToken?.substring(0, 20) + '...');
 
         if (!startDate || !endDate) {
             return res.status(400).json({
@@ -425,13 +421,13 @@ app.get('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (req
         console.log('   startDate:', startDate);
         console.log('   endDate:', endDate);
 
-        // FIXED: Use the correct parameter names for Lazada API
+        // Use exact parameter names that Lazada API expects
         const params = {
-            lastStartDate: startDate.trim(),  // Changed from startDate
-            lastEndDate: endDate.trim()        // Changed from endDate
+            startDate: startDate.trim(),
+            endDate: endDate.trim()
         };
 
-        // Add optional parameters with correct names
+        // Add optional parameters
         if (dimensions) {
             params.dimensions = dimensions;
             console.log('   dimensions:', dimensions);
@@ -498,6 +494,69 @@ app.get('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (req
     }
 });
 
+// ALTERNATIVE: Try using POST instead of GET
+// Some Lazada APIs might require POST for certain parameters
+app.post('/api/lazada/sponsor/solutions/report/overview', verifyToken, async (req, res) => {
+    try {
+        const {
+            startDate,
+            endDate,
+            dimensions,
+            metrics,
+            currencyType
+        } = req.body;
+
+        console.log('\n' + '='.repeat(60));
+        console.log('REPORT OVERVIEW API REQUEST (POST)');
+        console.log('='.repeat(60));
+        console.log('Body params received:', req.body);
+
+        if (!startDate || !endDate) {
+            return res.status(400).json({
+                error: 'Missing required parameters',
+                details: 'Both startDate and endDate are required (format: YYYY-MM-DD)',
+                received: { startDate, endDate }
+            });
+        }
+
+        const params = {
+            startDate: startDate.trim(),
+            endDate: endDate.trim()
+        };
+
+        if (dimensions) params.dimensions = dimensions;
+        if (metrics) params.metrics = metrics;
+        if (currencyType) params.currencyType = currencyType;
+
+        console.log('📤 POST Request Params:', JSON.stringify(params, null, 2));
+
+        const reportData = await lazadaAuth.makeRequest(
+            '/sponsor/solutions/report/getReportOverview',
+            req.accessToken,
+            params,
+            'POST' // Specify POST method
+        );
+
+        if (reportData.code !== '0' && reportData.code !== 0) {
+            return res.status(400).json({
+                error: 'Lazada API Error',
+                code: reportData.code,
+                message: reportData.message,
+                type: reportData.type,
+                request_id: reportData.request_id
+            });
+        }
+
+        res.json(reportData);
+    } catch (error) {
+        console.error('POST Request error:', error);
+        res.status(500).json({
+            error: 'Request failed',
+            message: error.message,
+            details: error.response?.data
+        });
+    }
+});
 // ============================================
 // ERROR HANDLING
 // ============================================
