@@ -98,85 +98,44 @@ class LazadaAuth {
     }
   }
 
-  // Make authenticated API request (GET or POST)
+  // Make authenticated API request (Simplified - GET only for now)
   async makeRequest(apiPath, accessToken, additionalParams = {}, method = 'GET') {
     const timestamp = this.getTimestamp();
 
-    // System parameters (always in query string for signature)
-    const systemParams = {
+    // Combine ALL parameters for signature and request
+    const allParams = {
       app_key: this.appKey,
       timestamp: timestamp.toString(),
       sign_method: 'sha256',
       access_token: accessToken,
+      ...additionalParams
     };
 
     console.log('\n🔧 LAZADA AUTH - makeRequest');
     console.log('   Method:', method);
     console.log('   API Path:', apiPath);
-    console.log('   Additional Params:', JSON.stringify(additionalParams, null, 2));
-
-    // For signature calculation, include ALL parameters
-    const allParamsForSignature = {
-      ...systemParams,
-      ...additionalParams
-    };
-
-    console.log('\n   All Params for Signature:');
-    Object.keys(allParamsForSignature).forEach(key => {
+    
+    console.log('\n   All Parameters (for signature):');
+    Object.keys(allParams).forEach(key => {
       const value = key === 'access_token' 
-        ? allParamsForSignature[key]?.substring(0, 20) + '...'
-        : allParamsForSignature[key];
+        ? allParams[key]?.substring(0, 20) + '...'
+        : allParams[key];
       console.log(`   ├─ ${key}:`, value);
     });
 
     // Generate signature with ALL parameters
-    const sign = this.generateSignature(apiPath, allParamsForSignature);
+    const sign = this.generateSignature(apiPath, allParams);
+    allParams.sign = sign;
     
     console.log('   └─ sign:', sign);
     console.log('\n   Full URL:', `${this.apiUrl}${apiPath}`);
+    console.log('   📡 Making GET request with all params in query string...');
 
     try {
-      let response;
-
-      if (method === 'POST') {
-        // For POST: system params + sign in query string, data params in body
-        const queryParams = {
-          ...systemParams,
-          sign: sign
-        };
-
-        console.log('\n   📡 Making POST request...');
-        console.log('   Query Params:', Object.keys(queryParams).join(', '));
-        console.log('   Body Params:', JSON.stringify(additionalParams, null, 2));
-
-        response = await axios.post(
-          `${this.apiUrl}${apiPath}`,
-          additionalParams,  // Send business params in body
-          { 
-            params: queryParams,  // Send system params in query
-            timeout: 30000,
-            headers: {
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-      } else {
-        // For GET: everything in query string
-        const allParams = {
-          ...systemParams,
-          ...additionalParams,
-          sign: sign
-        };
-
-        console.log('\n   📡 Making GET request...');
-        const queryString = new URLSearchParams(allParams).toString();
-        console.log('   Query String Length:', queryString.length);
-
-        response = await axios.get(`${this.apiUrl}${apiPath}`, { 
-          params: allParams,
-          timeout: 30000 
-        });
-      }
+      const response = await axios.get(`${this.apiUrl}${apiPath}`, { 
+        params: allParams,
+        timeout: 30000 
+      });
       
       console.log('   ✅ HTTP Status:', response.status);
       console.log('   ✅ Response Code:', response.data?.code);
@@ -191,7 +150,7 @@ class LazadaAuth {
       console.error('   ├─ Error Message:', error.message);
       console.error('   ├─ HTTP Status:', error.response?.status);
       console.error('   ├─ Response Data:', JSON.stringify(error.response?.data, null, 2));
-      console.error('   └─ URL:', error.config?.url);
+      console.error('   └─ Full URL:', error.config?.url);
       throw error;
     }
   }
