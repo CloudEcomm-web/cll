@@ -62,7 +62,7 @@ export default function DataInsights({ apiUrl }) {
       
       const allMetrics = [];
       const allRawResponses = {};
-      const timelineData = {};
+      const timelineDataByDate = {};
       
       results.forEach((result, index) => {
         if (result.status === 'fulfilled' && result.value) {
@@ -76,13 +76,20 @@ export default function DataInsights({ apiUrl }) {
               ...result.value.parsed
             });
 
-            // Aggregate timeline data
+            // Aggregate timeline data by date
             if (result.value.timeline) {
               result.value.timeline.forEach(item => {
-                if (!timelineData[item.date]) {
-                  timelineData[item.date] = { date: item.date, value: 0 };
+                if (!timelineDataByDate[item.date]) {
+                  timelineDataByDate[item.date] = { 
+                    date: item.date, 
+                    spend: 0, 
+                    roi: 0,
+                    count: 0 
+                  };
                 }
-                timelineData[item.date].value += item.value;
+                timelineDataByDate[item.date].spend += item.spend || 0;
+                timelineDataByDate[item.date].roi += item.roi || 0;
+                timelineDataByDate[item.date].count += 1;
               });
             }
           }
@@ -93,8 +100,15 @@ export default function DataInsights({ apiUrl }) {
         }
       });
       
+      // Average ROI across accounts for each date
+      const chartTimeline = Object.values(timelineDataByDate).map(item => ({
+        date: item.date,
+        spend: item.spend,
+        roi: item.count > 0 ? item.roi / item.count : 0
+      })).sort((a, b) => new Date(a.date) - new Date(b.date));
+      
       setMetricsData(allMetrics);
-      setChartData(Object.values(timelineData).sort((a, b) => new Date(a.date) - new Date(b.date)));
+      setChartData(chartTimeline);
       setRawResponses(allRawResponses);
     } catch (err) {
       setError('Failed to fetch report data');
@@ -129,26 +143,57 @@ export default function DataInsights({ apiUrl }) {
         status: response.status,
         code: data.code,
         message: data.message,
-        hasData: !!data.data
+        hasData: !!data.result
       });
 
       if (response.ok && (data.code === '0' || data.code === 0)) {
-        // Parse metrics from the response
-        const metrics = {
-          spend: parseFloat(data.data?.spend || 0),
-          revenue: parseFloat(data.data?.revenue || 0),
-          orders: parseInt(data.data?.orders || 0),
-          unitsSold: parseInt(data.data?.unitsSold || 0),
-          roi: parseFloat(data.data?.roi || 0),
-          spendChange: parseFloat(data.data?.spendChange || 0),
-          revenueChange: parseFloat(data.data?.revenueChange || 0),
-          ordersChange: parseFloat(data.data?.ordersChange || 0),
-          unitsSoldChange: parseFloat(data.data?.unitsSoldChange || 0),
-          roiChange: parseFloat(data.data?.roiChange || 0)
+        // Parse metrics from Lazada API response structure
+        const current = data.result?.reportOverviewDetailDTO || {};
+        const previous = data.result?.lastReportOverviewDetailDTO || {};
+
+        // Calculate percentage changes
+        const calculateChange = (current, previous) => {
+          if (previous === 0) return 0;
+          return ((current - previous) / previous) * 100;
         };
 
-        // Parse timeline data for chart
-        const timeline = data.data?.timeline || [];
+        const metrics = {
+          spend: parseFloat(current.spend || 0),
+          revenue: parseFloat(current.revenue || 0),
+          orders: parseInt(current.orders || 0),
+          unitsSold: parseInt(current.unitsSold || 0),
+          roi: parseFloat(current.roi || 0),
+          impressions: parseInt(current.impressions || 0),
+          clicks: parseInt(current.clicks || 0),
+          ctr: parseFloat(current.ctr || 0),
+          cpc: parseFloat(current.cpc || 0),
+          spendChange: calculateChange(current.spend, previous.spend),
+          revenueChange: calculateChange(current.revenue, previous.revenue),
+          ordersChange: calculateChange(current.orders, previous.orders),
+          unitsSoldChange: calculateChange(current.unitsSold, previous.unitsSold),
+          roiChange: calculateChange(current.roi, previous.roi)
+        };
+
+        // Create timeline data with both periods for better chart visualization
+        // Calculate daily values (approximate distribution across the period)
+        const startDate = new Date(dateRange.startDate);
+        const endDate = new Date(dateRange.endDate);
+        const daysDiff = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+        
+        const timeline = [];
+        const dailySpend = metrics.spend / daysDiff;
+        const dailyROI = metrics.roi; // ROI stays constant for visualization
+        
+        for (let i = 0; i < daysDiff; i++) {
+          const date = new Date(startDate);
+          date.setDate(date.getDate() + i);
+          timeline.push({
+            date: date.toISOString().split('T')[0],
+            spend: dailySpend * (i + 1), // Cumulative
+            roi: dailyROI,
+            revenue: (dailySpend * (i + 1) * dailyROI) / 100
+          });
+        }
         
         return { 
           parsed: metrics,
@@ -217,7 +262,11 @@ export default function DataInsights({ apiUrl }) {
         totalRevenue: 0,
         totalOrders: 0,
         totalUnitsSold: 0,
+        totalImpressions: 0,
+        totalClicks: 0,
         avgROI: 0,
+        avgCTR: 0,
+        avgCPC: 0,
         avgSpendChange: 0,
         avgRevenueChange: 0,
         avgOrdersChange: 0,
@@ -231,7 +280,11 @@ export default function DataInsights({ apiUrl }) {
       totalRevenue: acc.totalRevenue + curr.revenue,
       totalOrders: acc.totalOrders + curr.orders,
       totalUnitsSold: acc.totalUnitsSold + curr.unitsSold,
+      totalImpressions: acc.totalImpressions + (curr.impressions || 0),
+      totalClicks: acc.totalClicks + (curr.clicks || 0),
       avgROI: acc.avgROI + curr.roi,
+      avgCTR: acc.avgCTR + (curr.ctr || 0),
+      avgCPC: acc.avgCPC + (curr.cpc || 0),
       avgSpendChange: acc.avgSpendChange + curr.spendChange,
       avgRevenueChange: acc.avgRevenueChange + curr.revenueChange,
       avgOrdersChange: acc.avgOrdersChange + curr.ordersChange,
@@ -242,7 +295,11 @@ export default function DataInsights({ apiUrl }) {
       totalRevenue: 0,
       totalOrders: 0,
       totalUnitsSold: 0,
+      totalImpressions: 0,
+      totalClicks: 0,
       avgROI: 0,
+      avgCTR: 0,
+      avgCPC: 0,
       avgSpendChange: 0,
       avgRevenueChange: 0,
       avgOrdersChange: 0,
@@ -255,6 +312,8 @@ export default function DataInsights({ apiUrl }) {
     return {
       ...totals,
       avgROI: totals.avgROI / count,
+      avgCTR: totals.avgCTR / count,
+      avgCPC: totals.avgCPC / count,
       avgSpendChange: totals.avgSpendChange / count,
       avgRevenueChange: totals.avgRevenueChange / count,
       avgOrdersChange: totals.avgOrdersChange / count,
@@ -413,7 +472,7 @@ export default function DataInsights({ apiUrl }) {
         <>
           {/* Key Metrics Section */}
           <div className="mb-6">
-            <h2 className="text-xl font-bold mb-4">Key Metrics</h2>
+            <h2 className="text-xl font-bold mb-4">Revenue Metrics</h2>
             <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <MetricCard 
                 title="Spend" 
@@ -450,38 +509,112 @@ export default function DataInsights({ apiUrl }) {
             </div>
           </div>
 
+          {/* Advertising Metrics Section */}
+          <div className="mb-6">
+            <h2 className="text-xl font-bold mb-4">Advertising Metrics</h2>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="bg-white p-6 rounded-lg shadow-sm">
+                <div className="text-sm font-medium text-gray-600">Impressions</div>
+                <div className="text-3xl font-bold mt-2">
+                  {totals.totalImpressions.toLocaleString('en-US')}
+                </div>
+              </div>
+              <div className="bg-white p-6 rounded-lg shadow-sm">
+                <div className="text-sm font-medium text-gray-600">Clicks</div>
+                <div className="text-3xl font-bold mt-2">
+                  {totals.totalClicks.toLocaleString('en-US')}
+                </div>
+              </div>
+              <div className="bg-white p-6 rounded-lg shadow-sm">
+                <div className="text-sm font-medium text-gray-600">Avg CTR</div>
+                <div className="text-3xl font-bold mt-2">
+                  {totals.avgCTR.toFixed(2)}%
+                </div>
+              </div>
+              <div className="bg-white p-6 rounded-lg shadow-sm">
+                <div className="text-sm font-medium text-gray-600">Avg CPC</div>
+                <div className="text-3xl font-bold mt-2">
+                  PHP {totals.avgCPC.toFixed(2)}
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Chart Section */}
           {chartData.length > 0 && (
             <div className="bg-white p-6 rounded-lg shadow-sm mb-6">
               <h2 className="text-xl font-bold mb-4">Performance Trend</h2>
               <ResponsiveContainer width="100%" height={400}>
-                <LineChart data={chartData}>
+                <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                   <XAxis 
                     dataKey="date" 
-                    stroke="#6b7280"
+                    stroke="#9ca3af"
                     style={{ fontSize: '12px' }}
+                    tickFormatter={(value) => {
+                      const date = new Date(value);
+                      return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
+                    }}
                   />
+                  {/* Left Y-axis for Spend */}
                   <YAxis 
-                    stroke="#6b7280"
+                    yAxisId="left"
+                    stroke="#3b82f6"
                     style={{ fontSize: '12px' }}
+                    label={{ value: 'Spend', angle: -90, position: 'insideLeft', style: { fill: '#3b82f6' } }}
+                    tickFormatter={(value) => `${(value / 1000).toFixed(1)}k`}
+                  />
+                  {/* Right Y-axis for ROAS/ROI */}
+                  <YAxis 
+                    yAxisId="right"
+                    orientation="right"
+                    stroke="#a855f7"
+                    style={{ fontSize: '12px' }}
+                    label={{ value: 'ROAS', angle: 90, position: 'insideRight', style: { fill: '#a855f7' } }}
                   />
                   <Tooltip 
                     contentStyle={{ 
                       backgroundColor: 'white', 
                       border: '1px solid #e5e7eb',
-                      borderRadius: '8px'
+                      borderRadius: '8px',
+                      padding: '12px'
+                    }}
+                    formatter={(value, name) => {
+                      if (name === 'Spend') {
+                        return [`PHP ${parseFloat(value).toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 'Spend'];
+                      }
+                      if (name === 'ROAS') {
+                        return [`${parseFloat(value).toFixed(2)}`, 'ROAS'];
+                      }
+                      return [value, name];
+                    }}
+                    labelFormatter={(label) => {
+                      const date = new Date(label);
+                      return date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
                     }}
                   />
-                  <Legend />
+                  <Legend 
+                    wrapperStyle={{ paddingTop: '20px' }}
+                  />
                   <Line 
+                    yAxisId="left"
                     type="monotone" 
-                    dataKey="value" 
+                    dataKey="spend" 
                     stroke="#3b82f6" 
-                    strokeWidth={2}
+                    strokeWidth={3}
                     dot={{ fill: '#3b82f6', r: 4 }}
                     activeDot={{ r: 6 }}
-                    name="Performance"
+                    name="Spend"
+                  />
+                  <Line 
+                    yAxisId="right"
+                    type="monotone" 
+                    dataKey="roi" 
+                    stroke="#a855f7" 
+                    strokeWidth={3}
+                    dot={{ fill: '#a855f7', r: 4 }}
+                    activeDot={{ r: 6 }}
+                    name="ROAS"
                   />
                 </LineChart>
               </ResponsiveContainer>
