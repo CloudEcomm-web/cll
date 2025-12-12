@@ -465,7 +465,7 @@ app.get('/api/lazada/sponsor/solutions/report/getReportOverview', verifyToken, a
         console.log('\n📤 Calling Lazada API with GET method');
         
         const reportData = await lazadaAuth.makeRequest(
-            '/sponsor/solutions/report/getReportOverview',
+            '/auth/sponsor/solutions/report/getReportOverview',
             req.accessToken,
             params,
             'GET'
@@ -529,7 +529,7 @@ app.get('/api/lazada/sponsor/solutions/campaign/getCampaignList', verifyToken, a
         };
 
         const campaignData = await lazadaAuth.makeRequest(
-            '/sponsor/solutions/campaign/getCampaignList',
+            '/auth/sponsor/solutions/campaign/getCampaignList',
             req.accessToken,
             params,
             'GET'
@@ -589,7 +589,7 @@ app.get('/api/lazada/sponsor/solutions/report/getDiscoveryReportAdgroup', verify
         };
 
         const reportData = await lazadaAuth.makeRequest(
-            '/sponsor/solutions/report/getDiscoveryReportAdgroup',
+            '/auth/sponsor/solutions/report/getDiscoveryReportAdgroup',
             req.accessToken,
             params,
             'GET'
