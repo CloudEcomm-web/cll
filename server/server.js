@@ -18,7 +18,7 @@ const lazadaAuth = new LazadaAuth(
 // CORS configuration
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production' 
-    ? ['https://renzparagas123.github.io']
+    ? ['https://cloudecomm-web.github.io']
     : ['http://localhost:5173', 'http://localhost:3000'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -63,7 +63,7 @@ app.get('/api/test', (req, res) => {
 app.get('/api/lazada/auth-url', (req, res) => {
     try {
         const redirectUri = process.env.NODE_ENV === 'production'
-            ? 'https://renzparagas123.github.io/cll/callback'
+            ? 'https://cloudecomm-web.github.io/cll/callback'
             : 'http://localhost:5173/callback';
 
         const authUrl = `https://auth.lazada.com/oauth/authorize?response_type=code&force_auth=true&redirect_uri=${encodeURIComponent(redirectUri)}&client_id=${process.env.LAZADA_APP_KEY}`;
@@ -392,10 +392,10 @@ app.post('/api/lazada/orders/items', verifyToken, async (req, res) => {
 });
 
 // ============================================
-// SPONSOR SOLUTIONS - REPORTS
+// SPONSOR SOLUTIONS - REPORT ENDPOINTS
 // ============================================
 
-// Get Report Overview
+// Get report overview
 app.get('/api/lazada/sponsor/solutions/report/getReportOverview', verifyToken, async (req, res) => {
     try {
         const {
@@ -513,36 +513,20 @@ app.get('/api/lazada/sponsor/solutions/report/getReportOverview', verifyToken, a
     }
 });
 
-// ============================================
-// SPONSOR SOLUTIONS - CAMPAIGNS
-// ============================================
-
-// Get Campaign List
+// Get campaign list
 app.get('/api/lazada/sponsor/solutions/campaign/getCampaignList', verifyToken, async (req, res) => {
     try {
-        const {
-            pageNo = '1',
-            pageSize = '100',
-            campaignType,
-            onlineStatus,
-            switchStatus
-        } = req.query;
+        const { pageNo = '1', pageSize = '100' } = req.query;
 
         console.log('\n' + '='.repeat(60));
-        console.log('GET CAMPAIGN LIST API REQUEST');
+        console.log('GET CAMPAIGN LIST REQUEST');
         console.log('='.repeat(60));
+        console.log('Query params:', { pageNo, pageSize });
 
         const params = {
             pageNo,
             pageSize
         };
-
-        if (campaignType) params.campaignType = campaignType;
-        if (onlineStatus) params.onlineStatus = onlineStatus;
-        if (switchStatus) params.switchStatus = switchStatus;
-
-        console.log('📤 Calling Lazada API for campaign list');
-        console.log('   Params:', params);
 
         const campaignData = await lazadaAuth.makeRequest(
             '/sponsor/solutions/campaign/getCampaignList',
@@ -551,27 +535,21 @@ app.get('/api/lazada/sponsor/solutions/campaign/getCampaignList', verifyToken, a
             'GET'
         );
 
-        console.log('📥 Response received');
-        console.log('   Code:', campaignData.code);
+        console.log('Response code:', campaignData.code);
+        console.log('Campaigns found:', campaignData.result?.campaigns?.length || 0);
+        console.log('='.repeat(60) + '\n');
 
         if (campaignData.code !== '0' && campaignData.code !== 0) {
-            console.error('❌ API returned error:', campaignData.message);
-            console.log('='.repeat(60) + '\n');
-            
             return res.status(400).json({
                 error: 'Failed to get campaign list',
                 code: campaignData.code,
-                message: campaignData.message,
-                request_id: campaignData.request_id
+                message: campaignData.message
             });
         }
 
-        console.log('✅ SUCCESS - Campaign list retrieved');
-        console.log('='.repeat(60) + '\n');
-        
         res.json(campaignData);
     } catch (error) {
-        console.error('❌ Campaign list error:', error);
+        console.error('Campaign list error:', error);
         res.status(500).json({
             error: 'Failed to get campaign list',
             details: error.response?.data || error.message
@@ -579,7 +557,7 @@ app.get('/api/lazada/sponsor/solutions/campaign/getCampaignList', verifyToken, a
     }
 });
 
-// Get Discovery Report Adgroup (Daily breakdown by campaign/adgroup)
+// Get discovery report by adgroup
 app.get('/api/lazada/sponsor/solutions/report/getDiscoveryReportAdgroup', verifyToken, async (req, res) => {
     try {
         const {
@@ -587,48 +565,28 @@ app.get('/api/lazada/sponsor/solutions/report/getDiscoveryReportAdgroup', verify
             startDate,
             endDate,
             pageNo = '1',
-            pageSize = '1000',
-            sort,
-            order,
-            adgroupName,
-            adgroupId,
-            itemId,
-            useRtTable = 'true'
+            pageSize = '1000'
         } = req.query;
 
         console.log('\n' + '='.repeat(60));
-        console.log('GET DISCOVERY REPORT ADGROUP API REQUEST');
+        console.log('GET DISCOVERY REPORT ADGROUP REQUEST');
         console.log('='.repeat(60));
-        console.log('Query params received:', req.query);
+        console.log('Query params:', { campaignId, startDate, endDate, pageNo, pageSize });
 
         if (!campaignId || !startDate || !endDate) {
             return res.status(400).json({
                 error: 'Missing required parameters',
-                details: 'campaignId, startDate, and endDate are required',
-                received: { campaignId, startDate, endDate }
+                details: 'campaignId, startDate, and endDate are required'
             });
         }
 
         const params = {
             campaignId,
-            startDate: startDate.trim(),
-            endDate: endDate.trim(),
+            startDate,
+            endDate,
             pageNo,
-            pageSize,
-            useRtTable
+            pageSize
         };
-
-        // Add optional parameters
-        if (sort) params.sort = sort;
-        if (order) params.order = order;
-        if (adgroupName) params.adgroupName = adgroupName;
-        if (adgroupId) params.adgroupId = adgroupId;
-        if (itemId) params.itemId = itemId;
-
-        console.log('📤 Calling Lazada API for adgroup report');
-        console.log('   Campaign ID:', campaignId);
-        console.log('   Date Range:', startDate, 'to', endDate);
-        console.log('   Page:', pageNo, 'Size:', pageSize);
 
         const reportData = await lazadaAuth.makeRequest(
             '/sponsor/solutions/report/getDiscoveryReportAdgroup',
@@ -637,36 +595,24 @@ app.get('/api/lazada/sponsor/solutions/report/getDiscoveryReportAdgroup', verify
             'GET'
         );
 
-        console.log('📥 Response received');
-        console.log('   Code:', reportData.code);
-        console.log('   Total results:', reportData.result?.totalCount);
+        console.log('Response code:', reportData.code);
+        console.log('Reports found:', reportData.result?.result?.length || 0);
+        console.log('='.repeat(60) + '\n');
 
         if (reportData.code !== '0' && reportData.code !== 0) {
-            console.error('❌ API returned error:', reportData.message);
-            console.log('='.repeat(60) + '\n');
-            
             return res.status(400).json({
-                error: 'Failed to get adgroup report',
+                error: 'Failed to get discovery report',
                 code: reportData.code,
-                message: reportData.message,
-                request_id: reportData.request_id,
-                params_sent: params
+                message: reportData.message
             });
         }
 
-        console.log('✅ SUCCESS - Adgroup report retrieved');
-        console.log('='.repeat(60) + '\n');
-        
         res.json(reportData);
     } catch (error) {
-        console.error('❌ Adgroup report error:', error);
-        console.log('='.repeat(60) + '\n');
-        
+        console.error('Discovery report error:', error);
         res.status(500).json({
-            error: 'Failed to get adgroup report',
-            message: error.message,
-            details: error.response?.data,
-            status: error.response?.status
+            error: 'Failed to get discovery report',
+            details: error.response?.data || error.message
         });
     }
 });
@@ -719,10 +665,9 @@ app.listen(PORT, () => {
     console.log('  GET  /api/lazada/order/:orderId');
     console.log('  GET  /api/lazada/order/:orderId/items');
     console.log('  POST /api/lazada/orders/items');
-    console.log('\n📊 Sponsor Solutions - Reports:');
+    console.log('\n📊 Sponsor Solutions:');
     console.log('  GET  /api/lazada/sponsor/solutions/report/getReportOverview');
-    console.log('  GET  /api/lazada/sponsor/solutions/report/getDiscoveryReportAdgroup');
-    console.log('\n📢 Sponsor Solutions - Campaigns:');
     console.log('  GET  /api/lazada/sponsor/solutions/campaign/getCampaignList');
+    console.log('  GET  /api/lazada/sponsor/solutions/report/getDiscoveryReportAdgroup');
     console.log('='.repeat(60));
 });
