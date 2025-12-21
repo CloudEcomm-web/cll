@@ -726,6 +726,7 @@ app.get('/api/lazada/sponsor/solutions/report/getReportCampaignOnPrePlacement', 
     }
 });
 
+
 // Get discovery report by campaign (for overview data with orders)
 app.get('/api/lazada/sponsor/solutions/report/getDiscoveryReportCampaign', verifyToken, async (req, res) => {
     try {
@@ -761,6 +762,7 @@ app.get('/api/lazada/sponsor/solutions/report/getDiscoveryReportCampaign', verif
         });
 
         console.log('\n📤 Calling Lazada API with GET method');
+        console.log('   Endpoint: /sponsor/solutions/report/getDiscoveryReportCampaign');
         
         const reportData = await lazadaAuth.makeRequest(
             '/sponsor/solutions/report/getDiscoveryReportCampaign',
@@ -798,7 +800,7 @@ app.get('/api/lazada/sponsor/solutions/report/getDiscoveryReportCampaign', verif
             console.warn('   - No campaigns active during this period');
             console.warn('   - Date format issue');
             console.warn('   - Account has no Discovery campaigns');
-            console.warn('   - Permissions issue');
+            console.warn('   - Wrong endpoint for this account type');
         }
 
         console.log('✅ SUCCESS - Discovery report campaign data retrieved');
