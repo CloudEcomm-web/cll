@@ -614,25 +614,62 @@ export default function DataInsights({ apiUrl }) {
       return { totalSpend: 0, totalRevenue: 0, totalOrders: 0, totalUnitsSold: 0, totalImpressions: 0, totalClicks: 0, avgROI: 0, avgCTR: 0, avgCPC: 0, avgSpendChange: 0, avgRevenueChange: 0, avgOrdersChange: 0, avgUnitsSoldChange: 0, avgROIChange: 0 };
     }
 
-    // Simply sum all rows since each row represents campaign performance for a specific date
-    // This matches Seller Center's aggregation method
-    const totals = filteredData.reduce((acc, curr) => ({
-      totalSpend: acc.totalSpend + (curr.spend || 0),
-      totalRevenue: acc.totalRevenue + (curr.storeRevenue || 0),
-      totalOrders: acc.totalOrders + (curr.storeOrders || 0),
-      totalUnitsSold: acc.totalUnitsSold + (curr.storeUnitSold || 0),
-      totalImpressions: acc.totalImpressions + (curr.impressions || 0),
-      totalClicks: acc.totalClicks + (curr.clicks || 0),
-      totalA2c: acc.totalA2c + (curr.storeA2c || 0)
-    }), { 
-      totalSpend: 0, 
-      totalRevenue: 0, 
-      totalOrders: 0, 
-      totalUnitsSold: 0, 
-      totalImpressions: 0, 
+    console.log('📊 Calculating totals from', filteredData.length, 'rows');
+
+    // Group by date first to avoid double-counting orders from multiple campaigns
+    const dailyTotals = {};
+    
+    filteredData.forEach(campaign => {
+      const date = campaign.date;
+      if (!dailyTotals[date]) {
+        dailyTotals[date] = {
+          spend: 0,
+          revenue: 0,
+          orders: 0,
+          unitsSold: 0,
+          impressions: 0,
+          clicks: 0,
+          a2c: 0,
+          campaigns: []
+        };
+      }
+      
+      dailyTotals[date].spend += campaign.spend || 0;
+      dailyTotals[date].revenue += campaign.storeRevenue || 0;
+      dailyTotals[date].orders += campaign.storeOrders || 0;
+      dailyTotals[date].unitsSold += campaign.storeUnitSold || 0;
+      dailyTotals[date].impressions += campaign.impressions || 0;
+      dailyTotals[date].clicks += campaign.clicks || 0;
+      dailyTotals[date].a2c += campaign.storeA2c || 0;
+      dailyTotals[date].campaigns.push(campaign.campaignName);
+    });
+
+    // Log daily totals to see if orders match Seller Center
+    Object.entries(dailyTotals).sort().forEach(([date, data]) => {
+      console.log(`  ${date}: ${data.orders} orders (from ${data.campaigns.length} campaigns: ${data.campaigns.join(', ')})`);
+    });
+
+    // Sum across all days
+    const totals = Object.values(dailyTotals).reduce((acc, day) => ({
+      totalSpend: acc.totalSpend + day.spend,
+      totalRevenue: acc.totalRevenue + day.revenue,
+      totalOrders: acc.totalOrders + day.orders,
+      totalUnitsSold: acc.totalUnitsSold + day.unitsSold,
+      totalImpressions: acc.totalImpressions + day.impressions,
+      totalClicks: acc.totalClicks + day.clicks,
+      totalA2c: acc.totalA2c + day.a2c
+    }), {
+      totalSpend: 0,
+      totalRevenue: 0,
+      totalOrders: 0,
+      totalUnitsSold: 0,
+      totalImpressions: 0,
       totalClicks: 0,
       totalA2c: 0
     });
+
+    console.log('✅ TOTALS:', totals);
+    console.log('⚠️ Note: If orders dont match Seller Center, it means campaigns share order attribution');
 
     // Calculate averages from totals
     const avgCTR = totals.totalImpressions > 0 ? (totals.totalClicks / totals.totalImpressions) * 100 : 0;
