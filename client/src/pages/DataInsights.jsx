@@ -217,33 +217,103 @@ export default function DataInsights({ apiUrl }) {
     setRawResponses({});
     
     try {
-      const allMetrics = [];
+      const allCampaigns = [];
       const allRawResponses = {};
       
+      // Create date list for the range
+      const start = new Date(dateRange.startDate);
+      const end = new Date(dateRange.endDate);
+      const dateList = [];
+      
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        dateList.push(new Date(d).toISOString().split('T')[0]);
+      }
+      
       for (const account of accountsList) {
-        const result = await fetchAccountReports(account);
-        
-        if (result && result.parsed) {
-          allMetrics.push({
-            account_id: account.id,
-            account_name: account.account,
-            account_country: account.country,
-            timeline: result.timeline,
-            ...result.parsed
+        // Fetch campaign data for EACH DATE separately
+        for (const date of dateList) {
+          const params = new URLSearchParams({
+            startDate: date,
+            endDate: date,
+            pageNo: '1',
+            pageSize: '1000'
           });
-        }
-        
-        if (result && result.rawResponse) {
-          allRawResponses[account.id] = result.rawResponse;
+
+          const response = await fetch(
+            `${apiUrl}/lazada/sponsor/solutions/report/getDiscoveryReportCampaign?${params}`,
+            {
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${account.access_token}`,
+                'Content-Type': 'application/json'
+              }
+            }
+          );
+
+          const data = await response.json();
+
+          if (response.ok && (data.code === '0' || data.code === 0)) {
+            const campaigns = data.result?.result || [];
+            
+            console.log(`${date} - ${account.account}: Found ${campaigns.length} campaigns`);
+            
+            // Add each campaign as a separate row with the date
+            campaigns.forEach(campaign => {
+              allCampaigns.push({
+                date: date, // Add date to each row
+                account_id: account.id,
+                account_name: account.account,
+                account_country: account.country,
+                campaignName: campaign.campaignName || 'Unknown',
+                campaignId: campaign.campaignId,
+                campaignType: campaign.campaignType,
+                campaignObjective: campaign.campaignObjective,
+                dayBudget: parseFloat(campaign.dayBudget || 0),
+                spend: parseFloat(campaign.spend || 0),
+                revenue: parseFloat(campaign.storeRevenue || 0),
+                storeRevenue: parseFloat(campaign.storeRevenue || 0),
+                productRevenue: parseFloat(campaign.productRevenue || 0),
+                orders: parseInt(campaign.storeOrders || 0),
+                storeOrders: parseInt(campaign.storeOrders || 0),
+                productOrders: parseInt(campaign.productOrders || 0),
+                unitsSold: parseInt(campaign.storeUnitSold || 0),
+                storeUnitSold: parseInt(campaign.storeUnitSold || 0),
+                productUnitSold: parseInt(campaign.productUnitSold || 0),
+                roi: parseFloat(campaign.storeRoi || 0),
+                impressions: parseInt(campaign.impressions || 0),
+                clicks: parseInt(campaign.clicks || 0),
+                ctr: parseFloat(campaign.ctr || 0),
+                cpc: parseFloat(campaign.cpc || 0),
+                storeCvr: parseFloat(campaign.storeCvr || 0),
+                productCvr: parseFloat(campaign.productCvr || 0),
+                storeA2c: parseInt(campaign.storeA2c || 0),
+                productA2c: parseInt(campaign.productA2c || 0),
+                timeline: []
+              });
+            });
+            
+            if (!allRawResponses[account.id]) {
+              allRawResponses[account.id] = [];
+            }
+            allRawResponses[account.id].push({ date, data });
+          }
         }
       }
       
-      setMetricsData(allMetrics);
+      // Sort by date (newest first) then by campaign name
+      allCampaigns.sort((a, b) => {
+        const dateCompare = new Date(b.date) - new Date(a.date);
+        if (dateCompare !== 0) return dateCompare;
+        return (a.campaignName || '').localeCompare(b.campaignName || '');
+      });
+      
+      setMetricsData(allCampaigns);
       setRawResponses(allRawResponses);
       
-      updateChartData(allMetrics, selectedAccount);
+      // Don't update chart for campaign list view
+      setChartData([]);
     } catch (err) {
-      setError('Failed to fetch report data');
+      setError('Failed to fetch campaign data');
       console.error(err);
     } finally {
       setLoading(false);
@@ -329,29 +399,47 @@ export default function DataInsights({ apiUrl }) {
         if (response.ok && (data.code === '0' || data.code === 0)) {
           const campaigns = data.result?.result || [];
           
+          console.log(`${date}: Found ${campaigns.length} campaigns`);
+          
+          if (campaigns.length === 0) {
+            console.warn(`⚠️ No campaigns found for ${date}`);
+            return {
+              date: date,
+              spend: 0,
+              revenue: 0,
+              orders: 0,
+              unitsSold: 0,
+              roi: 0,
+              impressions: 0,
+              clicks: 0,
+              ctr: 0,
+              cpc: 0
+            };
+          }
+          
           // Aggregate all campaigns for this day
-          const dayTotals = campaigns.reduce((acc, campaign) => ({
-            spend: acc.spend + parseFloat(campaign.spend || 0),
-            storeRevenue: acc.storeRevenue + parseFloat(campaign.storeRevenue || 0),
-            productRevenue: acc.productRevenue + parseFloat(campaign.productRevenue || 0),
-            storeOrders: acc.storeOrders + parseInt(campaign.storeOrders || 0),
-            productOrders: acc.productOrders + parseInt(campaign.productOrders || 0),
-            storeUnitSold: acc.storeUnitSold + parseInt(campaign.storeUnitSold || 0),
-            productUnitSold: acc.productUnitSold + parseInt(campaign.productUnitSold || 0),
-            impressions: acc.impressions + parseInt(campaign.impressions || 0),
-            clicks: acc.clicks + parseInt(campaign.clicks || 0),
-            roiSum: acc.roiSum + parseFloat(campaign.storeRoi || 0),
-            ctrSum: acc.ctrSum + parseFloat(campaign.ctr || 0),
-            cpcSum: acc.cpcSum + parseFloat(campaign.cpc || 0),
-            count: acc.count + 1
-          }), {
+          const dayTotals = campaigns.reduce((acc, campaign) => {
+            console.log(`  - ${campaign.campaignName} (Type: ${campaign.campaignType}): orders=${campaign.storeOrders}, units=${campaign.storeUnitSold}`);
+            
+            return {
+              spend: acc.spend + parseFloat(campaign.spend || 0),
+              storeRevenue: acc.storeRevenue + parseFloat(campaign.storeRevenue || 0),
+              productRevenue: acc.productRevenue + parseFloat(campaign.productRevenue || 0),
+              storeOrders: acc.storeOrders + parseInt(campaign.storeOrders || 0),
+              storeUnitSold: acc.storeUnitSold + parseInt(campaign.storeUnitSold || 0),
+              impressions: acc.impressions + parseInt(campaign.impressions || 0),
+              clicks: acc.clicks + parseInt(campaign.clicks || 0),
+              roiSum: acc.roiSum + parseFloat(campaign.storeRoi || 0),
+              ctrSum: acc.ctrSum + parseFloat(campaign.ctr || 0),
+              cpcSum: acc.cpcSum + parseFloat(campaign.cpc || 0),
+              count: acc.count + 1
+            };
+          }, {
             spend: 0,
             storeRevenue: 0,
             productRevenue: 0,
             storeOrders: 0,
-            productOrders: 0,
             storeUnitSold: 0,
-            productUnitSold: 0,
             impressions: 0,
             clicks: 0,
             roiSum: 0,
@@ -361,11 +449,13 @@ export default function DataInsights({ apiUrl }) {
           });
 
           const totalRevenue = dayTotals.storeRevenue + dayTotals.productRevenue;
-          const totalOrders = dayTotals.storeOrders + dayTotals.productOrders;
-          const totalUnitsSold = dayTotals.storeUnitSold + dayTotals.productUnitSold;
+          const totalOrders = dayTotals.storeOrders;
+          const totalUnitsSold = dayTotals.storeUnitSold;
           const avgRoi = dayTotals.count > 0 ? dayTotals.roiSum / dayTotals.count : 0;
           const avgCtr = dayTotals.count > 0 ? dayTotals.ctrSum / dayTotals.count : 0;
           const avgCpc = dayTotals.count > 0 ? dayTotals.cpcSum / dayTotals.count : 0;
+          
+          console.log(`  ✅ TOTALS for ${date}: ${totalOrders} orders, ${totalUnitsSold} units, ${dayTotals.spend.toFixed(2)} spend`);
           
           return {
             date: date,
@@ -381,6 +471,7 @@ export default function DataInsights({ apiUrl }) {
           };
         }
         
+        console.error(`❌ Failed to fetch data for ${date}:`, data.message || 'Unknown error');
         return null;
       });
 
@@ -463,42 +554,23 @@ export default function DataInsights({ apiUrl }) {
     let rows = [];
 
     if (selectedCampaign === 'overview') {
-      headers = ['Date', 'Spend', 'Revenue', 'Orders', 'ROAS', 'Impressions', 'Clicks', 'Units Sold', 'CTR', 'CPC'];
-
-      const dateMap = {};
+      // Campaign list format (new table) - one row per campaign per date
+      headers = ['Date', 'Campaign Name', 'Budget', 'Spend', 'Revenue', 'Orders', 'ROI', 'Impressions', 'Clicks', 'CTR', 'CPC', 'Units Sold'];
       
-      filteredData.forEach(metric => {
-        if (metric.timeline && Array.isArray(metric.timeline)) {
-          metric.timeline.forEach(timelineItem => {
-            const date = timelineItem.date;
-            
-            if (!dateMap[date]) {
-              dateMap[date] = { spend: 0, revenue: 0, orders: 0, roi: 0, impressions: 0, clicks: 0, unitsSold: 0, ctr: 0, cpc: 0, count: 0 };
-            }
-            
-            dateMap[date].spend += timelineItem.spend || 0;
-            dateMap[date].revenue += timelineItem.revenue || 0;
-            dateMap[date].orders += timelineItem.orders || 0;
-            dateMap[date].roi += timelineItem.roi || 0;
-            dateMap[date].impressions += timelineItem.impressions || 0;
-            dateMap[date].clicks += timelineItem.clicks || 0;
-            dateMap[date].unitsSold += timelineItem.unitsSold || 0;
-            dateMap[date].ctr += timelineItem.ctr || 0;
-            dateMap[date].cpc += timelineItem.cpc || 0;
-            dateMap[date].count += 1;
-          });
-        }
-      });
-
-      rows = Object.keys(dateMap).sort((a, b) => new Date(a) - new Date(b)).map(date => {
-        const data = dateMap[date];
-        const count = data.count;
-        const avgRoi = count > 0 ? data.roi / count : 0;
-        const avgCtr = count > 0 ? data.ctr / count : 0;
-        const avgCpc = count > 0 ? data.cpc / count : 0;
-        
-        return [date, data.spend.toFixed(2), data.revenue.toFixed(2), data.orders, avgRoi.toFixed(2), data.impressions, data.clicks, data.unitsSold, (avgCtr).toFixed(2) + '%', avgCpc.toFixed(2)];
-      });
+      rows = filteredData.map(campaign => [
+        campaign.date, // Show actual date, not range
+        campaign.campaignName || '',
+        campaign.dayBudget.toFixed(0),
+        campaign.spend.toFixed(2),
+        campaign.storeRevenue.toFixed(2),
+        campaign.storeOrders,
+        campaign.roi.toFixed(2),
+        campaign.impressions,
+        campaign.clicks,
+        campaign.ctr.toFixed(2) + '%',
+        campaign.cpc.toFixed(2),
+        campaign.storeUnitSold
+      ]);
     } else {
       headers = ['Campaign Name', 'Product Type', 'Campaign Type', 'Spend', 'Store Revenue', 'Product Revenue', 'Store ROAS', 'Store Orders', 'Product Orders', 'Store Units', 'Product Units', 'Impressions', 'Clicks', 'CTR', 'CPC', 'Store CVR', 'Product CVR', 'Store A2C', 'Product A2C', 'Day Budget'];
 
@@ -542,25 +614,50 @@ export default function DataInsights({ apiUrl }) {
       return { totalSpend: 0, totalRevenue: 0, totalOrders: 0, totalUnitsSold: 0, totalImpressions: 0, totalClicks: 0, avgROI: 0, avgCTR: 0, avgCPC: 0, avgSpendChange: 0, avgRevenueChange: 0, avgOrdersChange: 0, avgUnitsSoldChange: 0, avgROIChange: 0 };
     }
 
+    // Simply sum all rows since each row represents campaign performance for a specific date
+    // This matches Seller Center's aggregation method
     const totals = filteredData.reduce((acc, curr) => ({
       totalSpend: acc.totalSpend + (curr.spend || 0),
-      totalRevenue: acc.totalRevenue + (curr.revenue || curr.storeRevenue || 0),
-      totalOrders: acc.totalOrders + (curr.orders || curr.storeOrders || 0),
-      totalUnitsSold: acc.totalUnitsSold + (curr.unitsSold || curr.storeUnitSold || 0),
+      totalRevenue: acc.totalRevenue + (curr.storeRevenue || 0),
+      totalOrders: acc.totalOrders + (curr.storeOrders || 0),
+      totalUnitsSold: acc.totalUnitsSold + (curr.storeUnitSold || 0),
       totalImpressions: acc.totalImpressions + (curr.impressions || 0),
       totalClicks: acc.totalClicks + (curr.clicks || 0),
-      avgROI: acc.avgROI + (curr.roi || 0),
-      avgCTR: acc.avgCTR + (curr.ctr || 0),
-      avgCPC: acc.avgCPC + (curr.cpc || 0),
-      avgSpendChange: acc.avgSpendChange + (curr.spendChange || 0),
-      avgRevenueChange: acc.avgRevenueChange + (curr.revenueChange || 0),
-      avgOrdersChange: acc.avgOrdersChange + (curr.ordersChange || 0),
-      avgUnitsSoldChange: acc.avgUnitsSoldChange + (curr.unitsSoldChange || 0),
-      avgROIChange: acc.avgROIChange + (curr.roiChange || 0)
-    }), { totalSpend: 0, totalRevenue: 0, totalOrders: 0, totalUnitsSold: 0, totalImpressions: 0, totalClicks: 0, avgROI: 0, avgCTR: 0, avgCPC: 0, avgSpendChange: 0, avgRevenueChange: 0, avgOrdersChange: 0, avgUnitsSoldChange: 0, avgROIChange: 0 });
+      totalA2c: acc.totalA2c + (curr.storeA2c || 0)
+    }), { 
+      totalSpend: 0, 
+      totalRevenue: 0, 
+      totalOrders: 0, 
+      totalUnitsSold: 0, 
+      totalImpressions: 0, 
+      totalClicks: 0,
+      totalA2c: 0
+    });
 
-    const count = filteredData.length;
-    return { ...totals, avgROI: totals.avgROI / count, avgCTR: totals.avgCTR / count, avgCPC: totals.avgCPC / count, avgSpendChange: totals.avgSpendChange / count, avgRevenueChange: totals.avgRevenueChange / count, avgOrdersChange: totals.avgOrdersChange / count, avgUnitsSoldChange: totals.avgUnitsSoldChange / count, avgROIChange: totals.avgROIChange / count };
+    // Calculate averages from totals
+    const avgCTR = totals.totalImpressions > 0 ? (totals.totalClicks / totals.totalImpressions) * 100 : 0;
+    const avgCPC = totals.totalClicks > 0 ? totals.totalSpend / totals.totalClicks : 0;
+    const avgROI = totals.totalSpend > 0 ? totals.totalRevenue / totals.totalSpend : 0;
+    const avgCVR = totals.totalClicks > 0 ? (totals.totalOrders / totals.totalClicks) * 100 : 0;
+
+    return { 
+      totalSpend: totals.totalSpend,
+      totalRevenue: totals.totalRevenue,
+      totalOrders: totals.totalOrders,
+      totalUnitsSold: totals.totalUnitsSold,
+      totalImpressions: totals.totalImpressions,
+      totalClicks: totals.totalClicks,
+      totalA2c: totals.totalA2c,
+      avgROI: avgROI,
+      avgCTR: avgCTR,
+      avgCPC: avgCPC,
+      avgCVR: avgCVR,
+      avgSpendChange: 0,
+      avgRevenueChange: 0,
+      avgOrdersChange: 0,
+      avgUnitsSoldChange: 0,
+      avgROIChange: 0
+    };
   };
 
   const totals = calculateTotals();
@@ -682,17 +779,13 @@ export default function DataInsights({ apiUrl }) {
             </div>
           </div>
 
-          {chartData.length > 0 && (
+          {chartData.length > 0 && selectedCampaign !== 'overview' && (
             <div className="px-6 py-6">
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={chartData} margin={{ top: 20, right: 60, left: 20, bottom: 20 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fill: '#9ca3af', fontSize: 12 }} angle={selectedCampaign !== 'overview' ? -45 : 0} textAnchor={selectedCampaign !== 'overview' ? 'end' : 'middle'} height={selectedCampaign !== 'overview' ? 100 : 30} tickFormatter={(value) => {
-                    if (selectedCampaign !== 'overview') {
-                      return value.length > 30 ? value.substring(0, 27) + '...' : value;
-                    }
-                    const d = new Date(value);
-                    return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fill: '#9ca3af', fontSize: 12 }} angle={-45} textAnchor="end" height={100} tickFormatter={(value) => {
+                    return value.length > 30 ? value.substring(0, 27) + '...' : value;
                   }} />
                   <YAxis yAxisId="left" orientation="left" axisLine={false} tickLine={false} tick={{ fill: '#9ca3af', fontSize: 12 }} label={{ value: 'Spend', angle: -90, position: 'insideLeft', style: { fill: '#6b7280', fontSize: 12 } }} domain={[0, 'auto']} />
                   <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{ fill: '#9ca3af', fontSize: 12 }} label={{ value: 'ROAS', angle: 90, position: 'insideRight', style: { fill: '#6b7280', fontSize: 12 } }} domain={[0, 'auto']} />
@@ -706,13 +799,62 @@ export default function DataInsights({ apiUrl }) {
                     return [value, name];
                   }} />
                   <Legend verticalAlign="bottom" height={36} iconType="line" wrapperStyle={{ fontSize: '12px', paddingTop: '20px' }} />
-                  <Line yAxisId="left" type="monotone" dataKey="Spend" stroke="#60a5fa" strokeWidth={2} dot={selectedCampaign !== 'overview'} activeDot={{ r: 4, fill: '#60a5fa' }} />
-                  <Line yAxisId="right" type="monotone" dataKey="ROAS" stroke="#c084fc" strokeWidth={2} dot={selectedCampaign !== 'overview'} activeDot={{ r: 4, fill: '#c084fc' }} />
+                  <Line yAxisId="left" type="monotone" dataKey="Spend" stroke="#60a5fa" strokeWidth={2} dot activeDot={{ r: 4, fill: '#60a5fa' }} />
+                  <Line yAxisId="right" type="monotone" dataKey="ROAS" stroke="#c084fc" strokeWidth={2} dot activeDot={{ r: 4, fill: '#c084fc' }} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           )}
 
+          {/* Campaign List Table for Overview */}
+          {selectedCampaign === 'overview' && metricsData.length > 0 && (
+            <div className="px-6 py-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">All Campaigns by Date</h2>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Campaign Name</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Budget</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Spend</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Revenue</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Orders</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">ROI</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Impressions</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Clicks</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">CTR</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">CPC</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Units</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {(selectedAccount === 'all' ? metricsData : metricsData.filter(m => m.account_id === selectedAccount)).map((campaign, index) => (
+                      <tr key={index} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">{campaign.date}</td>
+                        <td className="px-4 py-3 text-sm text-gray-900 max-w-xs">
+                          <div className="font-medium">{campaign.campaignName}</div>
+                          {selectedAccount === 'all' && <div className="text-xs text-gray-500">{campaign.account_name}</div>}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-right text-gray-600">{campaign.dayBudget.toLocaleString('en-US', { minimumFractionDigits: 0 })}</td>
+                        <td className="px-4 py-3 text-sm text-right text-gray-900 font-semibold">{campaign.spend.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-4 py-3 text-sm text-right text-gray-900">{campaign.storeRevenue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-4 py-3 text-sm text-right text-gray-900 font-medium">{campaign.storeOrders.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-sm text-right text-blue-600 font-bold">{campaign.roi.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-sm text-right text-gray-600">{campaign.impressions.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-sm text-right text-gray-600">{campaign.clicks.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-sm text-right text-gray-600">{campaign.ctr.toFixed(2)}%</td>
+                        <td className="px-4 py-3 text-sm text-right text-gray-600">{campaign.cpc.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-sm text-right text-gray-600">{campaign.storeUnitSold.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Campaign Detail Table (when specific campaign selected) */}
           {selectedCampaign !== 'overview' && metricsData.length > 0 && (
             <div className="px-6 py-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Campaign Performance Details</h2>
